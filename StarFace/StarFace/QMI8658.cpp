@@ -29,6 +29,8 @@ static unsigned short gyro_lsb_div = 0;
 static unsigned short ae_q_lsb_div = (1 << 14);
 static unsigned short ae_v_lsb_div = (1 << 10);
 static unsigned int imu_timestamp = 0;
+static bool rawReadLocked = false;
+void QMI8658_setRawReadLock(bool enabled) { rawReadLocked = enabled; }
 static struct QMI8658Config QMI8658_config;
 static unsigned char QMI8658_slave_addr = QMI8658_SLAVE_ADDR_L;
 
@@ -402,6 +404,14 @@ void QMI8658_read_xyz(float acc[3], float gyro[3], unsigned int *tim_count)
 
 bool QMI8658_read_xyz_raw(short raw_acc_xyz[3], short raw_gyro_xyz[3], unsigned int *tim_count)
 {
+    if (rawReadLocked) {
+        Wire.beginTransmission(QMI8658_slave_addr);
+        Wire.write(QMI8658Register_StatusInt);
+        if (Wire.endTransmission(false) != 0 || Wire.requestFrom(QMI8658_slave_addr, (uint8_t)1) != 1) return false;
+        unsigned char status = Wire.read();
+        if ((status & 0x03) != 0x01 && (status & 0x03) != 0x03) return false;
+        delayMicroseconds(12); // >=6 us required at the configured gyro ODR
+    }
     // One checked burst covers timestamp, temperature and all six sensor axes.
     // Reading through GZ_H also releases a retained SyncSample data lock.
     unsigned char buf_reg[17];
@@ -410,6 +420,7 @@ bool QMI8658_read_xyz_raw(short raw_acc_xyz[3], short raw_gyro_xyz[3], unsigned 
     if (Wire.endTransmission(false) != 0) return false;
     if (Wire.requestFrom(QMI8658_slave_addr, sizeof(buf_reg)) != sizeof(buf_reg)) {
         while (Wire.available()) Wire.read();
+        if (rawReadLocked) { unsigned char last; QMI8658_read_reg(QMI8658Register_Gz_H, &last, 1); }
         return false;
     }
     for (unsigned int i = 0; i < sizeof(buf_reg); ++i)

@@ -63,6 +63,12 @@ class Eyes {
   float openness(int eye) const { return openS[eye].pos; }
   void setDrowsiness(float d) { drowsy = anim::clamp01(d); }
   void setEyeColor(uint32_t rgb) { if (renderer) renderer->setEyeColor(rgb); }
+  void setFaceCharging(float amount, float phase) { if (renderer) renderer->setFaceCharging(amount, phase); }
+  void setChargingJoy(float amount) { joyTarget = anim::clamp01(amount); }
+  void setBatteryDisplay(int percent, float morph, float swirl, bool charging = false, float phase = 0,
+                         uint32_t displayColor = UINT32_MAX) {
+    if (renderer) renderer->setBatteryDisplay(percent, morph, swirl, charging, phase, displayColor);
+  }
   void setGazeBias(float x, float y) { biasX = x; biasY = y; } // nudges idle looks (tilt)
   void setSaccades(bool on, bool tense = false) { gaze.setSaccades(on, tense); }
   void setBlinkAllowed(bool allowed) { blinker.setAllowed(allowed); }
@@ -77,6 +83,16 @@ class Eyes {
     jit[eye][0] = ex; jit[eye][1] = ey; jit[eye][2] = px; jit[eye][3] = py;
   }
   void kickShape(int eye, EyeShapeField field, float velocity) { shape[eye].kick(field, velocity); }
+  // Authored squash/stretch accents layered onto expressions, with smooth recovery.
+  void setShapeAccent(int eye, float width, float height, float tilt = 0) {
+    accent[eye][0].target = anim::clampf(width,.65f,1.2f);
+    accent[eye][1].target = anim::clampf(height,.60f,1.2f);
+    accent[eye][2].target = anim::clampf(tilt,-.18f,.18f);
+  }
+  // Grow into the available screen space while attentive; sleep/readout settle back.
+  void setPresence(float level, bool gazeGrowth = true) {
+    presence.target = anim::clamp01(level); presenceGazeGrowth = gazeGrowth;
+  }
   void setSpiralSpeed(float radPerSec) { spiralSpeed = radPerSec; }
   // Rolls the whole face (radians, + clockwise), e.g. to stay level with the
   // ground while the star is turned; it follows on a soft, wobbly spring.
@@ -98,12 +114,16 @@ class Eyes {
   EyeFrame frame[2];
   uint32_t seed = 0, now = 0;
   float clock = 0;
+  float joy = 0, joyTarget = 0;
 
   // Expression layer
   Expression exprA = NEUTRAL, exprB = NEUTRAL;
   float exprT = 0, exprIntensity = 1, exprSpeed = 1;
   ShapeSpring shape[2];
   anim::Spring openS[2];
+  anim::Spring accent[2][3];
+  anim::Spring presence;
+  bool presenceGazeGrowth = true;
   float openSpeed = 1;
 
   // Gaze, blinks, idle
@@ -126,4 +146,5 @@ class Eyes {
   EyeShape targetShape(int eye) const;
   void compose();
   void fitToScreen(EyeFrame &f) const;
+  void separateEyes();
 };

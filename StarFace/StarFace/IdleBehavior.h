@@ -10,8 +10,8 @@
 class IdleBehavior {
  public:
   void begin(uint32_t now) {
-    nextGazeAt = now + 1200;
-    nextQuirkAt = now + anim::randMs(6000, 12000);
+    nextGazeAt = now + anim::randMs(400, 900);
+    nextQuirkAt = now + anim::randMs(6000, 11000);
   }
 
   // Returns true when it picked a new place to look (gazeX/gazeY/fast).
@@ -20,11 +20,11 @@ class IdleBehavior {
     bigJump = false;
     if (quirk != NEUTRAL && int32_t(now - quirkUntil) >= 0) quirk = NEUTRAL;
     if (liveliness > 0 && quirk == NEUTRAL && int32_t(now - nextQuirkAt) >= 0) {
-      static const Expression QUIRKS[] = {SQUINT, CURIOUS, SUSPICIOUS, HAPPY};
-      quirk = QUIRKS[int(anim::frand() * 4) & 3];
-      quirkAmount = anim::frand(.25f, .45f);
-      quirkUntil = now + anim::randMs(600, 1400);
-      nextQuirkAt = now + uint32_t(anim::randMs(4000, 9000) / liveliness);
+      static const Expression QUIRKS[] = {SQUINT, CURIOUS, SUSPICIOUS, HAPPY, CONFUSED};
+      quirk = QUIRKS[int(anim::frand() * 5) % 5];
+      quirkAmount = anim::frand(.12f, .28f) * (1 - .6f * drowsy);
+      quirkUntil = now + anim::randMs(350, 950);
+      nextQuirkAt = now + uint32_t(anim::randMs(6000, 12000) / fmaxf(.3f, liveliness));
     }
     if (int32_t(now - nextGazeAt) < 0) return false;
     pick(now, drowsy, bigJump);
@@ -101,7 +101,7 @@ class IdleBehavior {
       hold = randMs(220, 480);
     } else {
       float p = frand();
-      hold = p < .65f ? randMs(450, 1500) : p < .92f ? randMs(1500, 2800) : randMs(2800, 4200);
+      hold = p < .65f ? randMs(1100, 2400) : p < .92f ? randMs(2400, 3800) : randMs(3800, 5000);
       if (live > 0) hold = uint32_t(hold / fmaxf(.4f, live));
     }
     nextGazeAt = now + uint32_t(hold * (1.0f + drowsy));

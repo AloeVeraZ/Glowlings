@@ -54,7 +54,9 @@ void DEV_SPI_WriteByte(uint8_t Value)
 
 void DEV_SPI_Write_nByte(uint8_t pData[], uint32_t Len)
 {
-     vspi->transfer(pData, Len);
+     // The LCD only consumes these bytes. transfer() also receives into the
+     // same buffer, overwriting the rendered pixels and adding readback work.
+     vspi->writeBytes(pData, Len);
 }
 
 /**

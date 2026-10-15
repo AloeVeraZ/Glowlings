@@ -3,11 +3,13 @@
 #include "AnimMath.h"
 #include "Eyes.h"
 #include "BatteryState.h"
+#include "EnvironmentBehavior.h"
 
 // Timings of the longer reactions.
 static constexpr uint32_t DIZZY_ANIM_MS = 2850;
 static constexpr uint32_t ANGRY_ANIM_MS = 1900;
-static constexpr uint32_t BATTERY_SHOW_MS = 2600;
+static constexpr uint32_t BATTERY_MORPH_MS = 280;
+static constexpr uint32_t BATTERY_SHOW_MS = 4200;
 static constexpr uint32_t SLEEP_SEQUENCE_MS = 5400;
 
 // What the creature is doing. Moods are reactions to the outside world
@@ -17,7 +19,9 @@ enum class Mood : uint8_t {
   IDLE, HAPPY, SAD, ANGRY, DIZZY, SLEEPY, SURPRISED, ANXIOUS,
   WAKE_UP, BATTERY, BOOP, PETTED, SWIPING, FOLLOWING, CONFUSED, SHY,
   SHIVER, LOVED, UPSIDE_DOWN,
-  CURIOUS, YAWN, LOOK_AROUND   // little things it does by itself
+  CURIOUS, YAWN, LOOK_AROUND,
+  WINK, PLAYFUL, STRETCH,
+  PEEK, GIGGLE, SNEEZE, SASSY // original short performances while awake
 };
 
 // The creature's behaviour on top of the eye system: it turns events into
@@ -38,7 +42,11 @@ class CreatureAnimator {
   bool sustain(Mood m, uint32_t now, uint32_t durationMs);
   void queue(Mood m, uint32_t at, uint32_t durationMs, int param = 0);
   void showBattery(int percent, uint32_t now);
-  void setBatteryLevel(int percent) { battery.update(percent); }
+  bool batteryDisplayActive(uint32_t now) const { return current == Mood::BATTERY && activeAt(now); }
+  void setBatteryLevel(int percent, bool charging = false) {
+    battery.update(percent, charging);
+    if (current == Mood::BATTERY) batteryDisplayPercent = battery.percent;
+  }
   // fromShake plays a startled wake into dizziness; touched favors a startled wake.
   void startWake(uint32_t now, bool fromShake, bool touched = false);
   // napLevel > 0: fall asleep but keep the screen on at that backlight level.
@@ -53,6 +61,11 @@ class CreatureAnimator {
   // the star is swung (-1..1), from the motion sensor.
   void setFaceRoll(float r) { faceRoll = r; }
   void setSwing(float x, float y) { swingX = x; swingY = y; }
+  // Visual attention only: this never renews the power-saving timer.
+  void setMotionActivity(float level, uint32_t now) {
+    motionLevel = anim::clamp01(level);
+    if (motionLevel > .15f) lastMotionAt = now;
+  }
   // A bump or a pick-up it noticed while calm: a quick widen and blink, no mood change.
   void notice(float level, uint32_t now);
   // Being carried: walking (or running), with each footstep as it lands.
@@ -114,7 +127,7 @@ class CreatureAnimator {
   int queuedParam = 0;
   Mood batteryReturn = Mood::IDLE;
   uint32_t batteryReturnRemaining = 0;
-  float batteryAmount = .55f;
+  int batteryDisplayPercent = -1;
   float impactX = 1, impactY = 0;
   uint32_t angrySquintUntil = 0, nextAngrySquint = 0, nextDartAt = 0;
   bool touchAngerProtected = false;
@@ -132,6 +145,8 @@ class CreatureAnimator {
 
   // Inputs and effects
   float tiltX = 0, tiltY = 0, faceRoll = 0, swingX = 0, swingY = 0;
+  float motionLevel = 0;
+  uint32_t lastMotionAt = 0;
   uint32_t lastNoticeAt = 0;
   bool ownedGaze = false;
   bool walking = false, running = false, heldUp = false;
@@ -147,11 +162,14 @@ class CreatureAnimator {
   float shakeLevel = 0;
   float inertiaX = 0, inertiaY = 0;
   int8_t boopFar = -1;
-  uint32_t nextIdleAct = 0;
+  EnvironmentObserver environment;
+  bool reactedToEnvironment = false;
+  uint32_t lastEnvironmentAt = 0;
   bool idleActsAllowed = true;
   float drowsy = 0;
   BatteryState battery;
   float batteryFatigue = 0, batterySadness = 0;
+  float faceCharge = 0;
   float colorR = float((EYE_COLOR >> 16) & 255), colorG = float((EYE_COLOR >> 8) & 255), colorB = float(EYE_COLOR & 255);
   float blLevel = 0;
 

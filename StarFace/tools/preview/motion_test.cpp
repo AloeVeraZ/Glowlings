@@ -267,12 +267,12 @@ int main() {
     const float flat[3] = {0, 0, -1}, upright[3] = {0, -1, 0};
     struct Case { const char *name; const float *from; float to[3]; char axis; float lo, hi; };
     Case cases[] = {
-      {"flat, right side tipped down -> eyes look right", flat, {-sd, 0, -cd}, 'x', .7f, 1.01f},
-      {"flat, left side tipped down -> eyes look left", flat, {sd, 0, -cd}, 'x', -1.01f, -.7f},
-      {"flat, bottom edge tipped down -> eyes look down", flat, {0, -sd, -cd}, 'y', .7f, 1.01f},
-      {"flat, top edge tipped down -> eyes look up", flat, {0, sd, -cd}, 'y', -1.01f, -.7f},
-      {"upright, top tipped away (faces the sky) -> eyes look up", upright, {0, -cd, -sd}, 'y', -1.01f, -.7f},
-      {"upright, top tipped toward you -> eyes look down", upright, {0, -cd, sd}, 'y', .7f, 1.01f},
+      {"flat, right side tipped down -> eyes look outward left", flat, {-sd, 0, -cd}, 'x', -.85f, -.75f},
+      {"flat, left side tipped down -> eyes look outward right", flat, {sd, 0, -cd}, 'x', .75f, .85f},
+      {"flat, bottom edge tipped down -> eyes look down", flat, {0, -sd, -cd}, 'y', .98f, 1.01f},
+      {"flat, top edge tipped down -> eyes look up", flat, {0, sd, -cd}, 'y', -.46f, -.35f},
+      {"upright, top tipped away (faces the sky) -> eyes look up", upright, {0, -cd, -sd}, 'y', -.46f, -.35f},
+      {"upright, top tipped toward you -> eyes look down", upright, {0, -cd, sd}, 'y', .98f, 1.01f},
       {"upright, turned 25 deg clockwise -> face rolls back", upright, {-sd, -cd, 0}, 'r', -.47f, -.40f},
       {"upright, turned 25 deg anticlockwise -> face rolls back", upright, {sd, -cd, 0}, 'r', .40f, .47f},
       {"flat, turned (no 'level' when flat) -> no roll", flat, {0, 0, -1}, 'r', -.05f, .05f},
@@ -293,7 +293,7 @@ int main() {
       hold(w, flat, 2.0f, t);
       hold(w, tipped, 60.0f, t);
       snprintf(buf, sizeof buf, "tilt %.2f", w.tiltX);
-      check(fabsf(w.tiltX) < .25f, "a tilt held still for a minute becomes the new normal", buf);
+      check(w.tiltX < -.75f, "a held tilt keeps the inverted outward horizontal gaze", buf);
     }
     {
       WorldFollower w;
@@ -302,7 +302,7 @@ int main() {
       hold(w, upright, 1.0f, t);
       hold(w, upright, .5f, t, g);
       snprintf(buf, sizeof buf, "swing %.2f", w.swingX);
-      check(w.swingX > .25f, "swung around (3 rad/s) -> eyes counter-move", buf);
+      check(w.swingX < -.25f, "swung around (3 rad/s) -> eyes counter-move", buf);
       hold(w, upright, 1.0f, t);
       snprintf(buf, sizeof buf, "swing %.2f", w.swingX);
       check(fabsf(w.swingX) < .02f, "...and ease back once it stops", buf);

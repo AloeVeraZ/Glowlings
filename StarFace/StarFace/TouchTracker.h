@@ -79,6 +79,14 @@ class TouchTracker {
   }
 
   bool tracking() const { return down && !ignoring; }  // a finger is being followed
+  // A stationary finger may not generate more coordinate IRQs. A checked
+  // controller finger-count read can confirm contact without inventing a tap.
+  void confirmContact(uint32_t now) { if (down) lastSeenAt = now; }
+  Result confirmLift(uint32_t now) {
+    if (tracking()) return finish(now);
+    ignoring = down = false;
+    return Result();
+  }
   uint32_t heldFor(uint32_t now) const { return tracking() ? now - startAt : 0; }
 
  private:

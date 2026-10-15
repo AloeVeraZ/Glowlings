@@ -51,15 +51,16 @@ CST816S::CST816S(int sda, int scl, int rst, int irq) {
 /*!
     @brief  read touch data
 */
-void CST816S::read_touch() {
-  byte data_raw[8];
-  i2c_read(CST816S_ADDRESS, 0x01, data_raw, 6);
+bool CST816S::read_touch() {
+  byte data_raw[6];
+  if (i2c_read(CST816S_ADDRESS, 0x01, data_raw, 6) != 0) return false;
 
   data.gestureID = data_raw[0];
   data.points = data_raw[1];
   data.event = data_raw[2] >> 6;
   data.x = ((data_raw[2] & 0xF) << 8) + data_raw[3];
   data.y = ((data_raw[4] & 0xF) << 8) + data_raw[5];
+  return true;
 }
 
 /*!
@@ -92,7 +93,14 @@ void CST816S::begin(int interrupt) {
   delay(5);
   i2c_read(CST816S_ADDRESS, 0xA7, data.versionInfo, 3);
 
+  _event_available = false;
+  listen(interrupt);
+}
+
+void CST816S::listen(int interrupt) {
+  pinMode(_irq, INPUT_PULLUP);
   attachInterrupt(_irq, std::bind(&CST816S::handleISR, this), interrupt);
+  if (digitalRead(_irq) == LOW) _event_available = true;
 }
 
 /*!
@@ -100,9 +108,8 @@ void CST816S::begin(int interrupt) {
 */
 bool CST816S::available() {
   if (_event_available) {
-    read_touch();
     _event_available = false;
-    return true;
+    return read_touch();
   }
   return false;
 }
@@ -170,7 +177,10 @@ uint8_t CST816S::i2c_read(uint16_t addr, uint8_t reg_addr, uint8_t *reg_data, ui
   Wire.beginTransmission(addr);
   Wire.write(reg_addr);
   if ( Wire.endTransmission(true))return -1;
-  Wire.requestFrom(addr, length, true);
+  if (Wire.requestFrom(addr, length, true) != length) {
+    while (Wire.available()) Wire.read();
+    return -1;
+  }
   for (int i = 0; i < length; i++) {
     *reg_data++ = Wire.read();
   }

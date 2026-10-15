@@ -38,7 +38,7 @@ static int synthetic(int direction, int duration = 6000, bool pause = false, boo
   LeftRightWakeCheck check;
   for (int t = 0; t < 6500; t += 10) {
     float wave = sinf(t * .001f * 6.2831853f * 3.5f);
-    bool on = t >= 200 && t < duration && !(pause && t >= 1300 && t < 2200);
+    bool on = t >= 200 && t < duration && !(pause && t >= 500 && t < 1400);
     float a[3] = {0, 0, 9.81f}, g[3] = {};
     if (on) {
       if (direction == 0) { a[1] = 18 * wave; g[2] = 7 * wave; }
@@ -55,28 +55,95 @@ static int synthetic(int direction, int duration = 6000, bool pause = false, boo
   return -1;
 }
 
+// Deliberate shakes and worst-case sideways bag swings use the SAME axes and
+// strengths here: rejection must depend on cadence, not just the carried clip.
+static int cadence(float hz, float accel, float gyro, int period, float phase,
+                   bool jitter = false, uint32_t epoch = 1) {
+  LeftRightWakeCheck check;
+  for (int t = 0, i = 0; t < 20000; ++i) {
+    float wave = sinf(t * .001f * 6.2831853f * hz + phase);
+    float a[3] = {0, accel * wave, 9.81f}, g[3] = {0, 0, gyro * wave};
+    if (check.feed(a, g, epoch + uint32_t(t))) return t;
+    t += jitter ? period + (i % 3 - 1) * period / 3 : period;
+  }
+  return -1;
+}
+
+static bool dangling(float hz, float phase, bool running) {
+  LeftRightWakeCheck check;
+  for (int t = 0; t < 30000; t += 10) {
+    float swing = sinf(t * .001f * 6.2831853f * hz + phase);
+    float turn = cosf(t * .001f * 6.2831853f * hz + phase);
+    float bounce = fmaxf(0, sinf(t * .001f * 6.2831853f * (running ? 3 : 2)));
+    float a[3] = {3 * swing, 18 * swing, 9.81f + (running ? 12 : 5) * bounce};
+    float g[3] = {turn, 2 * turn, 7 * turn};
+    if (check.feed(a, g, uint32_t(t + 1))) return true;
+  }
+  return false;
+}
+
 int main() {
   int failures = 0;
   for (int period : {40, 55, 80}) {
     for (int offset = 0; offset < 12; ++offset) {
       int yes = replay(intended, period, 20, offset);
       int no = replay(carried, period, 40, offset);
-      if (yes < int(SHAKE_WAKE_HOLD_MS) || no >= 0) {
+      if (yes < int(DIRECTIONAL_WAKE_HOLD_MS) || yes > 2200 || no >= 0) {
         ++failures;
         printf("Replay %d ms offset %d: intended=%d carried=%d FAILED\n", period, offset, yes, no);
       }
     }
-    if (replay(intended, period, 1) >= 0) { ++failures; puts("Brief recording woke too soon"); }
   }
   int good = synthetic(0), inverted = synthetic(0, 6000, false, true);
   printf("Deliberate left/right: %d ms, reversed signs: %d ms\n", good, inverted);
-  if (good < 1700 || good > 2300 || inverted < 1700 || inverted > 2300) ++failures;
+  if (good < 550 || good > 900 || inverted < 550 || inverted > 900) ++failures;
   for (int direction = 1; direction <= 6; ++direction) {
     int got = synthetic(direction);
     printf("Rejected motion %d: %s\n", direction, got < 0 ? "asleep" : "FALSE WAKE");
     if (got >= 0) ++failures;
   }
-  if (synthetic(0, 1400) >= 0 || synthetic(0, 2700, true) >= 0) ++failures;
+  if (synthetic(0, 500) >= 0 || synthetic(0, 1700, true) >= 0) ++failures;
+  // Quick recognition across read rates, starting phases, jitter, moderate
+  // movement, and millis() wrap. Four reversals still exclude single bumps.
+  for (int period : {3, 10, 20, 40}) for (float phase : {0.f, 1.f, 2.f, 3.f}) {
+    for (float hz : {3.f, 3.5f, 4.f, 5.f}) {
+      int at = cadence(hz, 12, 5, period, phase, true);
+      if (at < int(DIRECTIONAL_WAKE_HOLD_MS) || at > 1200) {
+        ++failures;
+        printf("Brisk %.1f Hz period %d phase %.0f: %d ms FAILED\n", hz, period, phase, at);
+      }
+    }
+    for (float hz : {.7f, 1.f, 1.5f, 2.f, 2.5f}) {
+      if (cadence(hz, 25, 10, period, phase, true) >= 0 || dangling(hz, phase, false) || dangling(hz, phase, true)) {
+        ++failures;
+        printf("Dangling %.1f Hz period %d phase %.0f: FALSE WAKE\n", hz, period, phase);
+      }
+    }
+    if (cadence(4, 1, .5f, period, phase) >= 0) { ++failures; puts("Small sensor noise woke face"); }
+  }
+  if (cadence(3.5f, 12, 5, 10, 1, false, UINT32_MAX - 300) < 0) {
+    ++failures; puts("Wake failed across millis wrap");
+  }
+  // A case impact can ring rapidly on both axes, but fades before the hold.
+  LeftRightWakeCheck impact;
+  for (int t = 0; t < 3000; t += 10) {
+    float ring = t < 200 ? 0 : 60 * expf(-(t - 200) * .001f / .06f) * sinf(t * .05f);
+    float a[3] = {0, ring, 9.81f}, g[3] = {0, 0, ring * .5f};
+    if (impact.feed(a, g, t + 1)) { ++failures; puts("Single impact ringing woke face"); break; }
+  }
+  // Picking it up after it has been dangling must still permit a quick wake.
+  LeftRightWakeCheck pickup;
+  int pickupWake = -1;
+  for (int t = 0; t < 7000; t += 10) {
+    bool deliberate = t >= 5000;
+    float wave = sinf(t * .001f * 6.2831853f * (deliberate ? 3.5f : 1.8f));
+    float a[3] = {0, (deliberate ? 12 : 18) * wave, 9.81f}, g[3] = {0, 0, 5 * wave};
+    if (pickup.feed(a, g, t + 1)) { pickupWake = t; break; }
+  }
+  if (pickupWake < 5000 + int(DIRECTIONAL_WAKE_HOLD_MS) || pickupWake > 6200) {
+    ++failures; printf("Dangling to deliberate shake: %d ms FAILED\n", pickupWake);
+  }
+  puts("Cadence checks include bag/pants swings, walking/running bounce, noise and timer wrap");
   // A gap in sampling must not count as time spent performing the gesture.
   LeftRightWakeCheck gap;
   for (int t = 0; t < 1000; t += 20) {

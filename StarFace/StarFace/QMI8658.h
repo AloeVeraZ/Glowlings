@@ -484,6 +484,7 @@ extern void QMI8658_read_xyz(float acc[3], float gyro[3], unsigned int *tim_coun
 // Returns false on a failed/incomplete I2C read. tim_count is the native
 // 24-bit sample counter, which wraps at 0xFFFFFF.
 extern bool QMI8658_read_xyz_raw(short raw_acc_xyz[3], short raw_gyro_xyz[3], unsigned int *tim_count);
+extern void QMI8658_setRawReadLock(bool enabled);
 extern void QMI8658_read_ae(float quat[4], float velocity[3]);
 extern unsigned char QMI8658_readStatus0(void);
 extern unsigned char QMI8658_readStatus1(void);

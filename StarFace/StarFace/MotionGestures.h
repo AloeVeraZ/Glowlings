@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "FaceConfig.h"
+#include "MotionHeading.h"
 
 // Motion gestures, so every reaction works without the touch screen (for
 // example behind a protective cover). Like ShakeDetector they are free of
@@ -222,89 +223,213 @@ class RockDetector {
 };
 
 // ---- Following the world: tilt, roll, swing, spin and toss ------------------
-// Fed every render-loop sample (a, g in the screen's frame). Gives where the
-// eyes should look when tilted (toward the low side, relative to how it is
-// normally held; a tilt held still for TILT_SETTLE_S becomes the new normal),
-// how far the face should roll to stay level, the eyes' counter-move while it
-// is swung, and one-off events when it is spun around or goes weightless.
+// Screen-coordinate gravity/gyro fusion. A held tilt keeps its actual direction;
+// settling flat or upright rebases the pitch reference. Gyro-only heading turns
+// work while flat, and cues follow the physical movement rather than oppose it.
+inline void rotateMotionXY(float v[3], uint8_t quarterTurns) {
+  for (uint8_t i = 0; i < (quarterTurns & 3); ++i) { float x = v[0]; v[0] = -v[1]; v[1] = x; }
+}
+
+// Pixel directions use Y down. The positive-Z mounting uses Y up in the
+// right-handed fusion frame. Convert 2D effects only AFTER the mounting
+// rotation; never use this reflection on angular velocity before fusion.
+inline void gestureMotionToScreen(float v[3]) {
+  rotateMotionXY(v, GAZE_IMU_ROTATION);
+  v[1] *= -GAZE_FLAT_UP_SIGN;
+}
+
+// Deliberate turns renew activity; noise and recognized transport do not.
+class DeliberateTurnActivity {
+ public:
+  bool feed(const float g[3], uint32_t now, bool enabled = true) {
+    float dt = lastAt ? fminf(.1f, (now - lastAt) * .001f) : 0;
+    lastAt = now;
+    if (!enabled) { arc = 0; lastMovingAt = 0; return false; }
+    float rate = motion::len3(g);
+    if (rate < .04f) {
+      if (now - lastMovingAt > 300) arc = 0;
+      return false;
+    }
+    lastMovingAt = now;
+    arc += (rate - .03f) * dt;
+    if (arc < .04f) return false; // about 2.3 degrees, above noise but responsive to a small turn
+    arc = 0;
+    return true;
+  }
+  bool feedTilt(const float a[3], bool enabled = true) {
+    float n = motion::len3(a);
+    if (!enabled || n < 7.5f || n > 12.0f) { haveAnchor = false; return false; }
+    float unit[3] = {a[0]/n,a[1]/n,a[2]/n};
+    if (!haveAnchor) { for (int i = 0; i < 3; ++i) anchor[i] = unit[i]; haveAnchor = true; return false; }
+    float delta = 0;
+    for (int i = 0; i < 3; ++i) delta += (unit[i]-anchor[i])*(unit[i]-anchor[i]);
+    if (delta < .0016f) return false; // ~2.3 degrees, including a gentle slow lean
+    for (int i = 0; i < 3; ++i) anchor[i] = unit[i];
+    return true;
+  }
+ private:
+  float anchor[3] = {};
+  bool haveAnchor = false;
+  float arc = 0;
+  uint32_t lastAt = 0, lastMovingAt = 0;
+};
+
 class WorldFollower {
  public:
-  float tiltX = 0, tiltY = 0;    // -1..1, toward the low side
-  float roll = 0;                // radians: rolling the face by this keeps it level
-  float swingX = 0, swingY = 0;  // -1..1 counter-move of the eyes
-  bool spun = false;             // this sample: spun around on the spot SPIN_TURNS_FOR_DIZZY times
-  bool weightless = false;       // this sample: tossed or dropped (FREEFALL_MS without weight)
-
-  void feed(const float a[3], const float g[3], float shakeStrength, uint32_t now) {
-    spun = weightless = false;
-    float dt = lastAt ? fminf(.1f, (now - lastAt) / 1000.0f) : .025f;
-    lastAt = now;
-    const float n = motion::len3(a), spin = motion::len3(g);
-
-    // Weightless for a moment.
-    if (n < 3.0f && shakeStrength < 3.0f) {
-      if (!fallSince) fallSince = now;
-      if (!fallen && now - fallSince >= FREEFALL_MS) { fallen = true; weightless = true; }
-    } else {
-      fallSince = 0;
-      if (n > 7.0f) fallen = false;
-    }
-    // Spun around in the plane of the screen.
-    if (fabsf(g[2]) > 2.5f) { turned += g[2] * dt; spinAt = now; }
-    else if (now - spinAt > 400) turned = 0;
-    if (fabsf(turned) > SPIN_TURNS_FOR_DIZZY * 6.2831853f) { turned = 0; spun = true; }
-    // Swung: the eyes counter-move against the turn, easing back once it stops.
-    float tx = 0, ty = 0;
-    if (shakeStrength < 2.0f) {
-      tx = fmaxf(-.6f, fminf(.6f, g[1] * SWING_GAZE));
-      ty = fmaxf(-.6f, fminf(.6f, -g[0] * SWING_GAZE));
-    }
-    swingX += (tx - swingX) * .35f;
-    swingY += (ty - swingY) * .35f;
-
-    // Tilt and roll from gravity ("up" as the screen sees it).
-    if (n < 6.0f || n > 14.0f) return;            // jostled: gravity is unreadable right now
-    float u[3] = {a[0] / n, a[1] / n, a[2] / n};
-    if (!haveBase) { for (int i = 0; i < 3; ++i) base[i] = u[i]; haveBase = true; }
-    // A pan around gravity leaves the accelerometer unchanged (e.g. turning
-    // an upright screen left/right). Integrate that gyro component briefly;
-    // its deadband and slow recenter prevent an unobservable heading drifting.
-    float yawRate = g[0] * base[0] + g[1] * base[1] + g[2] * base[2];
-    if (fabsf(yawRate) < .06f || shakeStrength > 2.0f) yawRate = 0;
-    panX = (panX + yawRate * base[1] * dt) * expf(-dt / TILT_SETTLE_S);
-    panY = (panY - yawRate * base[0] * dt) * expf(-dt / TILT_SETTLE_S);
-    panX = fmaxf(-.6f, fminf(.6f, panX));
-    panY = fmaxf(-.6f, fminf(.6f, panY));
-    if (spin < .3f && fabsf(n - 9.81f) < .8f) {
-      float k = dt / TILT_SETTLE_S;               // held still: slowly the new normal
-      for (int i = 0; i < 3; ++i) base[i] += (u[i] - base[i]) * k;
-      float bn = motion::len3(base);
-      for (int i = 0; i < 3; ++i) base[i] /= bn;
-    }
-    // The turn from the normal pose (base x up) says which side went down.
-    float rx = base[1] * u[2] - base[2] * u[1];
-    float ry = base[2] * u[0] - base[0] * u[2];
-    // Upright in-plane rotation moves gravity left/right, but ry stays zero.
-    // Include that planar angle so combined pitch/roll traces a full gaze circle.
-    float bp = sqrtf(base[0] * base[0] + base[1] * base[1]), up = sqrtf(u[0] * u[0] + u[1] * u[1]);
-    float w = fminf(bp, up);
-    w = w <= .35f ? 0.0f : w >= .7f ? 1.0f : (w - .35f) / .35f;
-    w = w * w * (3.0f - 2.0f * w);
-    float r = atan2f(base[0] * u[1] - base[1] * u[0], base[0] * u[0] + base[1] * u[1]) * w;
-    float gx = fmaxf(-1.0f, fminf(1.0f, (ry - r + panX) * TILT_GAZE));
-    float gy = fmaxf(-1.0f, fminf(1.0f, (-rx + panY) * TILT_GAZE));
-    tiltX += (gx - tiltX) * .35f;
-    tiltY += (gy - tiltY) * .35f;
-    // Turned in the plane of the screen: the face rolls back to stay level
-    // (only when the screen is upright enough for "level" to mean something).
-    roll = fmaxf(-FACE_ROLL_MAX, fminf(FACE_ROLL_MAX, r));
+  float tiltX = 0, tiltY = 0, roll = 0;
+  float swingX = 0, swingY = 0, motionLevel = 0;
+  bool spun = false, weightless = false;
+  bool uprightReferenceActive() const { return wearPose; }
+  // Caller supplies enclosure trim; generic screen-frame fixtures use zero.
+  void setHorizontalCenter(float tableDegrees, float hangingDegrees) {
+    tableCenter = tableDegrees*.017453293f;
+    hangingCenter = hangingDegrees*.017453293f;
+  }
+  void setFlatUpSign(float sign) {
+    sign = sign > 0 ? 1 : -1;
+    if (flatUpSign != sign) { flatUpSign = sign; seeded = false; }
   }
 
+  void feed(const float a[3], const float g[3], float shakeStrength, uint32_t now,
+            const float headingGyro[3] = nullptr) {
+    const float dt = lastAt ? fminf(.1f, (now - lastAt) * .001f) : .025f;
+    if (lastAt && now - lastAt > 250) {
+      seeded = false;
+      // Refresh gravity after missed reads, but keep the held heading through
+      // a brief sensor/render stall. A long sleep starts a new heading reference.
+      if (now-lastAt > 2000) heading.reset();
+    }
+    lastAt = now;
+    spun = weightless = false;
+    const float n = motion::len3(a);
+    float rate[3];
+    for (int i = 0; i < 3; ++i) rate[i] = fabsf(g[i]) < .03f ? 0 : g[i];
+    const float spin = motion::len3(rate);
+    motionLevel += (fmaxf(0, fminf(1, (spin - .06f) / .8f)) - motionLevel) * (1 - expf(-dt / .10f));
+    if (n < 3 && shakeStrength < 3) {
+      if (!fallSince) fallSince = now;
+      if (!fallen && now - fallSince >= FREEFALL_MS) { fallen = true; weightless = true; }
+    } else { fallSince = 0; if (n > 7) fallen = false; }
+    if (fabsf(rate[2]) > 2.5f) { turned += rate[2] * dt; spinAt = now; }
+    else if (now - spinAt > 400) turned = 0;
+    if (fabsf(turned) > SPIN_TURNS_FOR_DIZZY * 6.2831853f) { turned = 0; spun = true; }
+
+    bool reliable = n > 7.5f && n < 12.0f;
+    if (!seeded) {
+      if (!reliable) return;
+      for (int i = 0; i < 3; ++i) up[i] = a[i] / n;
+      wearPose = flatUpSign*up[2] < .95f;
+      if (wearPose) hangingUpSign = copysignf(1.0f,up[1]);
+      // The measured USB-bottom hanging pose is +90 degrees. A transient
+      // shake sample must not select the opposite upright pole at startup.
+      neutralPitch = wearPose ? 1.57079633f : 0;
+      poseCandidate = wearPose; poseSince = now; transitioning = false;
+      seeded = true;
+    }
+    // A body-frame reference vector rotates opposite the board's angular
+    // velocity. Rodrigues integration uses all three gyro axes consistently.
+    if (spin > 0) {
+      float axis[3] = {rate[0]/spin,rate[1]/spin,rate[2]/spin};
+      float c = cosf(spin * dt), sn = -sinf(spin * dt);
+      float dot = axis[0]*up[0] + axis[1]*up[1] + axis[2]*up[2];
+      float cross[3] = {axis[1]*up[2]-axis[2]*up[1], axis[2]*up[0]-axis[0]*up[2], axis[0]*up[1]-axis[1]*up[0]};
+      for (int i = 0; i < 3; ++i) up[i] = up[i]*c + cross[i]*sn + axis[i]*dot*(1-c);
+    }
+    if (reliable) {
+      // Transport can resemble shaking to the energy detector. Keep a slower
+      // gravity correction in that case instead of integrating gyro forever.
+      float k = 1 - expf(-dt / (shakeStrength < 2 ? .04f : .25f));
+      for (int i = 0; i < 3; ++i) up[i] += (a[i] / n - up[i]) * k;
+    }
+    float length = motion::len3(up);
+    if (length < .01f || !isfinite(length)) { seeded = false; return; }
+    for (float &v : up) v /= length;
+
+    // Select the display posture from gravity even while walking/being held.
+    // Requiring a quiet gyro here left the flat reference stuck when worn.
+    // Hysteresis keeps a 40/140-degree lean relative to upright, while only
+    // an actually screen-up, nearly-flat pose returns to the table reference.
+    bool candidate = wearPose;
+    if (flatUpSign*up[2] > .95f) candidate = false;
+    else if (fabsf(up[2]) < .57f && fabsf(up[1]) > .45f) candidate = true;
+    if (candidate != wearPose) {
+      if (candidate != poseCandidate) { poseCandidate = candidate; poseSince = now; }
+      if (now-poseSince >= GAZE_POSE_SETTLE_MS) {
+        wearPose = candidate;
+        if (wearPose) hangingUpSign = copysignf(1.0f,up[1]);
+        neutralPitch = wearPose ? 1.57079633f : 0;
+        poseChangedAt = now; transitioning = true;
+      }
+    } else { poseCandidate = wearPose; poseSince = now; }
+
+    // Gravity gives tilt, while heading turns around gravity need the gyro.
+    // This also works when flat, where a Z turn leaves acceleration unchanged.
+    float yaw = -(rate[0]*up[0] + rate[1]*up[1] + rate[2]*up[2]);
+    if (shakeStrength >= 2 || fabsf(yaw) < .15f) yaw = 0; // suppress handheld tremor/bias pan
+    // Track the full relative rotation. Scalar gyro-dot-gravity integration
+    // treated parts of a closed roll/pitch circle as permanent heading turns.
+    heading.update(up,headingGyro ? headingGyro : g,dt,shakeStrength<2);
+    float pan=heading.value();
+    float pitchPlane = up[1]*up[1] + up[2]*up[2];
+    // Keep the gravity reference's hemisphere beyond a side-on lean. An
+    // unsigned denominator folded 90..180 degrees back toward centre.
+    float horizontalReference = wearPose ? hangingUpSign*up[1] : flatUpSign*up[2];
+    float horizontalAngle = atan2f(-up[0],copysignf(sqrtf(pitchPlane),horizontalReference));
+    float horizontalCenter = wearPose ? hangingCenter : tableCenter;
+    float gx = HORIZONTAL_GAZE_SIGN*gentleAngle(horizontalAngle+pan-horizontalCenter,
+                                               HORIZONTAL_GAZE_FULL_DEG,HORIZONTAL_GAZE_NEUTRAL_DEG);
+    // Project pitch relative to upright directly. Using |Y| prevents rolling
+    // left/right through a side-on pose from inventing a vertical 180° turn.
+    float pitch = wearPose ? atan2f(-copysignf(1.0f,neutralPitch)*flatUpSign*up[2],fabsf(up[1])) : pitchOf(up);
+    float gy = gentleAngle(pitch,pitch > 0 ? DOWNWARD_GAZE_FULL_DEG : VERTICAL_GAZE_FULL_DEG);
+    float confidence = fmaxf(0,fminf(1,(pitchPlane-.025f)/.175f));
+    gy *= confidence*confidence*(3-2*confidence);
+    if (transitioning) {
+      float blend = fminf(1,(now-poseChangedAt)/300.0f);
+      gy *= blend*blend*(3-2*blend);
+      if (blend >= 1) transitioning = false;
+    }
+    float k = 1 - expf(-dt / .065f);
+    float horizontalK = 1 - expf(-dt / HORIZONTAL_GAZE_SMOOTH_S);
+    tiltX += (fmaxf(-1, fminf(1, gx)) - tiltX) * horizontalK;
+    tiltY += (fmaxf(-1, fminf(1, gy)) - tiltY) * k;
+    float planar = sqrtf(up[0]*up[0] + up[1]*up[1]);
+    float upright = fmaxf(0, fminf(1, (planar - .35f) / .35f));
+    roll = fmaxf(-FACE_ROLL_MAX, fminf(FACE_ROLL_MAX, atan2f(up[0], flatUpSign*up[1]) * upright));
+
+    // Immediate motion cues point with the actual tilt/turn, not against it.
+    float sx = 0, sy = 0;
+    if (shakeStrength < 2 && spin > .15f) {
+      sx = HORIZONTAL_GAZE_SIGN*(up[2]*rate[1] - up[1]*rate[2] + yaw) * HORIZONTAL_SWING_GAZE;
+      // Differentiate the same gravity-derived pitch used for held gaze.
+      // This includes cross-axis terms during a diagonal tilt and stays in
+      // agreement with Rodrigues prediction when flat, upright or inverted.
+      float pitchRate = pitchPlane > .04f ?
+          (rate[0] - up[0]*(rate[1]*up[1] + rate[2]*up[2])/pitchPlane) : 0;
+      if (wearPose) pitchRate *= copysignf(1.0f,neutralPitch)*flatUpSign*copysignf(1.0f,up[1]);
+      else pitchRate *= flatUpSign*copysignf(1.0f,up[2]);
+      sy = fmaxf(-5, fminf(5, pitchRate)) * SWING_GAZE*confidence*confidence*(3-2*confidence);
+    }
+    float sk = 1 - expf(-dt / .065f);
+    swingX += (fmaxf(-.6f, fminf(.6f, sx)) - swingX) * horizontalK;
+    swingY += (fmaxf(-.6f, fminf(.6f, sy)) - swingY) * sk;
+  }
  private:
-  bool haveBase = false, fallen = false;
-  float base[3] = {0, -1, 0}, turned = 0;
-  float panX = 0, panY = 0;
-  uint32_t lastAt = 0, fallSince = 0, spinAt = 0;
+  // A horizontal roll may reverse Z without any vertical tilt. Using its
+  // magnitude avoids a fabricated +/-180-degree vertical gaze at that point.
+  float pitchOf(const float v[3]) const { return atan2f(flatUpSign*v[1],fabsf(v[2])); }
+  static float gentleAngle(float radians,float fullDegrees,float neutralDegrees=GAZE_NEUTRAL_ZONE_DEG) {
+    float dead = neutralDegrees*.017453293f;
+    float magnitude = fmaxf(0,fabsf(radians)-dead);
+    return copysignf(fminf(1,magnitude/fmaxf(.01f,fullDegrees*.017453293f-dead)),radians);
+  }
+  MotionHeading heading;
+  float up[3] = {0,0,-1}, neutralPitch = 0, turned = 0;
+  float tableCenter = 0, hangingCenter = 0;
+  float hangingUpSign = 1;
+  float flatUpSign = -1;
+  bool seeded = false, fallen = false, wearPose = false, poseCandidate = false, transitioning = false;
+  uint32_t lastAt = 0, poseSince = 0, poseChangedAt = 0, fallSince = 0, spinAt = 0;
 };
 
 // ---- Being carried: walking and running steps ---------------------------------

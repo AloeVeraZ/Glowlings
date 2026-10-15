@@ -9,7 +9,7 @@ constexpr float CLOSE_LINE_Y = 0.22f;       // the lids meet below centre (the u
 constexpr float CLOSE_LINE_CURVE = -0.16f;  // ...along a gentle smile-like curve (ends lift), in half-heights
 constexpr float LID_FOLLOWS_GAZE = 0.09f;   // the upper lid lowers as the eyes look down, like real lids
 constexpr float LID_ARCH = 0.40f;           // lids curve around the eyeball instead of cutting straight
-constexpr float CURIOUS_GROW = 0.06f;       // the eye on the side being looked toward grows this much
+constexpr float CURIOUS_GROW = 0.08f;       // the leading eye grows toward what caught its attention
 constexpr float INERTIA_LIMIT_X = 0.075f;   // physical sway limits, of screen size
 constexpr float INERTIA_LIMIT_Y = 0.065f;
 constexpr float PX = SCREEN_MIN_SIDE / 240.0f; // layout constants are authored at 240 px
@@ -23,8 +23,10 @@ void Eyes::begin(EyeRenderer *r, uint32_t unitSeed, uint32_t t) {
   for (int i = 0; i < 2; ++i) {
     shape[i].snap(expressionShape(NEUTRAL, i == 1));
     openS[i].snap(1);
+    accent[i][0].snap(1); accent[i][1].snap(1); accent[i][2].snap(0);
   }
   rollS.snap(0);
+  presence.snap(0); presenceGazeGrowth = true;
   dilateS.snap(1);
   blinker.begin(now);
   idle.begin(now);
@@ -81,7 +83,7 @@ EyeShape Eyes::targetShape(int eye) const {
 
 void Eyes::update(float dt, uint32_t t) {
   now = t;
-  dt = clampf(dt, .0005f, .05f);      // a lag spike never becomes a jump
+  dt = clampf(dt, .0005f, .12f);      // springs sub-step; ordinary slow frames retain real time
   const float sdt = dt * ANIMATION_SPEED;
   clock += dt;
 
@@ -113,6 +115,7 @@ void Eyes::update(float dt, uint32_t t) {
     shape[i].setTarget(targetShape(i));
     shape[i].update(sdt, freq, zeta);
     openS[i].update(sdt, 5.0f * openSpeed, openSpeed > 1.5f ? .6f : 1.0f);
+    for (int field = 0; field < 3; ++field) accent[i][field].update(sdt,8,.68f);
   }
   gaze.update(sdt, now, drowsy);
 
@@ -132,6 +135,8 @@ void Eyes::update(float dt, uint32_t t) {
   rollS.update(sdt, 2.3f, .45f);        // a soft pendulum: it swings level and settles
   dilateS.target = dilateTarget;
   dilateS.update(sdt, 2.0f, .9f);
+  presence.update(sdt,4.5f,.90f);
+  joy = approach(joy,joyTarget,3.0f,dt);
   compose();
 }
 
@@ -142,34 +147,42 @@ void Eyes::draw() {
 // ---- Combine every layer into the final pixel geometry ----
 
 void Eyes::compose() {
-  const float breath = (.7f * sinf(clock * TAU_F / 3.8f) + .3f * noise1(clock * .6f, seed + 3)) * PX;
+  const float breath = (1.1f * sinf(clock * TAU_F / 3.8f) + .35f * noise1(clock * .6f, seed + 3)) * PX;
   const float roll = rollS.pos + FACE_ANGLE_DEG * (PI_F / 180.0f), rc = cosf(roll), rs = sinf(roll);
   for (int i = 0; i < 2; ++i) {
-    const EyeShape s = shape[i].value();
+    EyeShape s = shape[i].value();
+    // A persistent open-eyed smile, without shrinking the black iris as the
+    // full HAPPY preset does. It yields smoothly to authored reactions.
+    s.bottomLid += .025f*joy;
+    s.bottomCurve += .08f*joy;
+    s.y -= .045f*joy;
+    s.width *= accent[i][0].pos; s.height *= accent[i][1].pos; s.tilt += accent[i][2].pos;
     const float side = i == 0 ? -1.0f : 1.0f;   // the left eye sits left of centre
     const float inward = -side;                 // screen direction toward the nose
     const float blink = clampf(blinker.closure(i), -.1f, 1.0f);
 
     // Gaze: the pupils lead, the eyes follow; plus offsets (swing reflex) and
     // a faint fixation tremor that keeps a held look alive.
-    const float tremor = .012f * PUPIL_LIFE;
+    const float tremor = .012f * PUPIL_LIFE * (1.0f-joy);
     const float gx = gaze.pupilX(i) + jitS[i][2].pos + offX + tremor * noise1(clock * 23.0f, seed + 41 + i);
     const float gy = gaze.pupilY(i) + jitS[i][3].pos + offY + tremor * noise1(clock * 21.0f, seed + 51 + i);
     const float tx = gaze.travelX(i) + offX * .3f, ty = gaze.travelY(i) + offY * .3f;
+    float looking = presenceGazeGrowth ? smoothstep(.08f,.80f,sqrtf(tx*tx+ty*ty)) : 0;
+    float attention = clamp01(fmaxf(presence.pos,looking));
 
     // Size: the expression, a curious lean toward the gaze, squash and stretch.
     const float look = clampf(tx * side, -1.0f, 1.0f);
     const float grow = 1.0f + CURIOUS_GROW * fmaxf(0.0f, look) - .4f * CURIOUS_GROW * fmaxf(0.0f, -look);
     const float vx = gaze.travelVelX(i) * MAX_EYE_MOVE_X * SCREEN_MIN_SIDE + bodyX.vel;
     const float vy = gaze.travelVelY(i) * MAX_EYE_MOVE_Y * SCREEN_MIN_SIDE + bodyY.vel;
-    const float sqx = clampf(fabsf(vx) * (SQUASH_STRETCH / (1600.0f * PX)), 0.0f, .07f);
-    const float sqy = clampf(fabsf(vy) * (SQUASH_STRETCH / (1600.0f * PX)), 0.0f, .07f);
+    const float sqx = clampf(fabsf(vx) * (SQUASH_STRETCH / (1600.0f * PX)), 0.0f, .14f);
+    const float sqy = clampf(fabsf(vy) * (SQUASH_STRETCH / (1600.0f * PX)), 0.0f, .14f);
     const float open = clampf(openS[i].pos, 0.0f, 1.3f);
     const float wide = 1.0f + .5f * fmaxf(0.0f, open - 1.0f) - .25f * fminf(0.0f, blink); // wide-eyed / the lift after a blink
-    float rx = EYE_HALF_WIDTH * s.width * grow * (1.0f + sqx - .5f * sqy);
-    float ry = EYE_HALF_HEIGHT * s.height * grow * wide * (1.0f + sqy - .5f * sqx);
+    float rx = EYE_HALF_WIDTH * s.width * grow * (1+ACTIVE_EYE_WIDTH_GROW*attention) * (1.0f + sqx - .5f * sqy);
+    float ry = EYE_HALF_HEIGHT * s.height * grow * wide * (1+ACTIVE_EYE_HEIGHT_GROW*attention) * (1.0f + sqy - .5f * sqx);
     rx = fminf(rx, EYE_HALF_WIDTH * MAX_EXPRESSION_EXPANSION);
-    ry = fminf(ry, EYE_HALF_HEIGHT * MAX_EXPRESSION_EXPANSION);
+    ry = fminf(ry, EYE_HALF_HEIGHT * MAX_EYE_HEIGHT_EXPANSION);
 
     // Closing: lids slide over the eye (blinks, sleep, wake). The lids of the
     // expression blend into a pair meeting along a soft curve below centre.
@@ -214,7 +227,7 @@ void Eyes::compose() {
     // of the eyeball. It tucks away as the lids meet, so a shut eye is one
     // clean line.
     const float pulse = 1.0f + .07f * s.heart * fmaxf(0.0f, sinf(clock * TAU_F * 1.5f)); // a beating heart
-    const float life = 1.0f + .035f * PUPIL_LIFE * noise1(clock * .25f, seed + 61);
+    const float life = 1.0f + .035f * PUPIL_LIFE * (1.0f-joy) * noise1(clock * .25f, seed + 61);
     float pr = PUPIL_SIZE * EYE_HALF_WIDTH * s.width * grow * s.pupil * smoothstep(.2f, .45f, s.pupil)
                * pulse * life * clampf(dilateS.pos, .5f, 1.4f);
     pr *= 1.0f - smoothstep(.45f, .72f, c);
@@ -253,6 +266,7 @@ void Eyes::compose() {
     f.spiralPhase = spiralPhase * side + i * 1.3f;   // the two spirals turn opposite ways
     fitToScreen(f);
   }
+  separateEyes();
 }
 
 // ---- Keep each eye on screen. On a round panel a soft knee eases the eye in
@@ -266,6 +280,29 @@ static void scaleFrame(EyeFrame &f, float k) {
   f.lidRound *= k; f.pupilR *= k; f.pupilX *= k; f.pupilY *= k;
   f.glintX *= k; f.glintY *= k; f.glintR *= k; f.glint2X *= k; f.glint2Y *= k; f.glint2R *= k;
   f.coreR *= k; f.cheekX *= k; f.cheekY *= k; f.cheekRX *= k; f.cheekRY *= k;
+}
+
+void Eyes::separateEyes() {
+  // Screen fitting can push the pair together. Reserve a separating strip
+  // along their centre line, including each eye's rotation and curved shape.
+  // Shrink about the already-safe centres so this cannot undo screen fitting.
+  float dx=frame[1].cx-frame[0].cx,dy=frame[1].cy-frame[0].cy;
+  float distance=sqrtf(dx*dx+dy*dy);
+  if (distance < .01f) return;
+  float ux=dx/distance,uy=dy/distance,totalReach=0;
+  for (int i=0;i<2;++i) {
+    const EyeFrame &f=frame[i];
+    float direction=i ? -1.0f : 1.0f,mirror=f.rightEye ? -1.0f : 1.0f;
+    float ct=cosf(f.tilt),st=sinf(f.tilt);
+    float a=direction*(ux*mirror*ct+uy*st);
+    float b=direction*(-ux*mirror*st+uy*ct);
+    totalReach += sqrtf(f.rx*f.rx*a*a+f.ry*f.ry*b*b)+fmaxf(0,b*f.bend);
+  }
+  float room=fmaxf(1,distance-MIN_EYE_GAP*SCREEN_MIN_SIDE);
+  if (totalReach > room) {
+    float scale=room/totalReach;
+    for (EyeFrame &f : frame) scaleFrame(f,scale);
+  }
 }
 
 void Eyes::fitToScreen(EyeFrame &f) const {
@@ -321,4 +358,20 @@ void Eyes::fitToScreen(EyeFrame &f) const {
   move += fmaxf(0.0f, rest);   // whatever a small shrink can't absorb, it moves in
   f.cx -= ux * move;
   f.cy -= uy * move;
+  // Moving away from one extreme can expose the opposite end of a tall,
+  // rotated eye. Recheck the corrected contour and contract the entire eye
+  // about the panel centre if needed; every outline point contracts with it.
+  float bound2=0;
+  for (int k=0;k<N;++k) {
+    float lx=f.rx*cs[k],ly=f.ry*sn[k]+f.bend*cs[k]*cs[k];
+    float x=f.cx-SCREEN_CX+(lx*tc-ly*ts)*mirror;
+    float y=f.cy-SCREEN_CY+lx*ts+ly*tc;
+    bound2=fmaxf(bound2,x*x+y*y);
+  }
+  if (bound2 > SAFE_RADIUS*SAFE_RADIUS) {
+    float k=SAFE_RADIUS/sqrtf(bound2);
+    f.cx=SCREEN_CX+(f.cx-SCREEN_CX)*k;
+    f.cy=SCREEN_CY+(f.cy-SCREEN_CY)*k;
+    scaleFrame(f,k);
+  }
 }

@@ -17,7 +17,7 @@ class LeftRightWakeCheck {
   bool carryingMotion() const { return carry; }
 
   bool feed(const float a[3], const float g[3], uint32_t now) {
-    if (seeded && now - lastAt < 20) return false;
+    if (seeded && now - lastAt < 10) return false;
     if (!seeded || now - lastAt > 250) {
       *this = LeftRightWakeCheck();
       seeded = true;
@@ -28,7 +28,7 @@ class LeftRightWakeCheck {
     const float dt = (now - lastAt) * .001f;
     lastAt = now;
     const float gravityK = 1.0f - expf(-dt / .25f);
-    const float energyK = 1.0f - expf(-dt / .40f);
+    const float energyK = 1.0f - expf(-dt / .18f);
     float lin[3], accelTotal = .001f, gyroTotal = .001f;
     for (int i = 0; i < 3; ++i) {
       gravity[i] += (a[i] - gravity[i]) * gravityK;
@@ -41,28 +41,32 @@ class LeftRightWakeCheck {
     accelShare = accelEnergy[1] / accelTotal;
     gyroShare = gyroEnergy[2] / gyroTotal;
     zOverY = gyroEnergy[2] / fmaxf(.001f, gyroEnergy[1]);
-    const bool ready = now - startedAt >= 200;
+    const bool ready = now - startedAt >= WAKE_DIRECTION_SETTLE_MS;
     carry = ready && gyroTotal > 1.0f && accelShare < .40f &&
             gyroEnergy[1] > gyroEnergy[2] * 1.25f;
     const bool good = ready && accelShare >= WAKE_AY_ENERGY_SHARE &&
                       gyroShare >= WAKE_GZ_ENERGY_SHARE && zOverY >= WAKE_GZ_OVER_GY &&
                       accelEnergy[1] >= WAKE_AY_RMS_MS2 * WAKE_AY_RMS_MS2 &&
                       gyroEnergy[2] >= WAKE_GZ_RMS_RAD_S * WAKE_GZ_RMS_RAD_S;
+    // Check stale sweeps BEFORE counting a new one. Otherwise a late sample
+    // can refresh the timestamp and let a slow dangling swing sneak through.
+    if (active && (carry || now - lastGoodAt > SHAKE_WAKE_DROPOUT_MS ||
+        (swings && now - lastAccelSwingAt > WAKE_REVERSAL_MAX_MS) ||
+        (gyroSwings && now - lastGyroSwingAt > WAKE_REVERSAL_MAX_MS))) {
+      active = false;
+      swings = gyroSwings = 0;
+      accelSign = gyroSign = 0;
+    }
     if (good) {
       if (!active) { active = true; since = now; swings = gyroSwings = 0; accelSign = gyroSign = 0; }
       seenMotion = true;
       lastGoodAt = now;
     }
-    if (active && (carry || now - lastGoodAt > SHAKE_WAKE_DROPOUT_MS)) {
-      active = false;
-      swings = gyroSwings = 0;
-      accelSign = gyroSign = 0;
-    }
     if (!active) return false;
 
     // Count each signed sweep once, including realistic pauses at its ends.
     if (fabsf(lin[1]) >= WAKE_AY_STROKE_MS2 &&
-        (!swings || now - lastAccelSwingAt >= 60)) {
+        (!swings || now - lastAccelSwingAt >= WAKE_REVERSAL_MIN_MS)) {
       int sign = lin[1] > 0 ? 1 : -1;
       if (sign != accelSign) {
         accelSign = sign;
@@ -71,7 +75,7 @@ class LeftRightWakeCheck {
       }
     }
     if (fabsf(g[2]) >= WAKE_GZ_REVERSAL_RAD_S &&
-        (!gyroSwings || now - lastGyroSwingAt >= 60)) {
+        (!gyroSwings || now - lastGyroSwingAt >= WAKE_REVERSAL_MIN_MS)) {
       int sign = g[2] > 0 ? 1 : -1;
       if (sign != gyroSign) {
         gyroSign = sign;
@@ -79,16 +83,10 @@ class LeftRightWakeCheck {
         lastGyroSwingAt = now;
       }
     }
-    // Energy decays slowly; fresh reversals must continue through confirmation.
-    if ((swings && now - lastAccelSwingAt > 500) ||
-        (gyroSwings && now - lastGyroSwingAt > 500)) {
-      active = false;
-      swings = gyroSwings = 0;
-      return false;
-    }
-    return good && now - since >= SHAKE_WAKE_HOLD_MS && swings >= SHAKE_WAKE_SWINGS &&
-           gyroSwings >= 4 && now - lastAccelSwingAt <= SHAKE_WAKE_DROPOUT_MS &&
-           now - lastGyroSwingAt <= SHAKE_WAKE_DROPOUT_MS;
+    // Both axes must keep reversing briskly through confirmation.
+    return good && now - since >= DIRECTIONAL_WAKE_HOLD_MS && swings >= WAKE_DIRECTION_SWINGS &&
+           gyroSwings >= WAKE_DIRECTION_SWINGS && now - lastAccelSwingAt <= WAKE_REVERSAL_MAX_MS &&
+           now - lastGyroSwingAt <= WAKE_REVERSAL_MAX_MS;
   }
 
  private:

@@ -25,7 +25,8 @@ int main() {
   Mood lastMood = Mood::IDLE;
   const Mood moods[] = {Mood::HAPPY, Mood::SAD, Mood::ANGRY, Mood::DIZZY, Mood::SURPRISED, Mood::ANXIOUS, Mood::BOOP, Mood::PETTED,
                         Mood::SWIPING, Mood::FOLLOWING, Mood::CONFUSED, Mood::SHY, Mood::SHIVER, Mood::LOVED, Mood::UPSIDE_DOWN,
-                        Mood::CURIOUS, Mood::YAWN, Mood::LOOK_AROUND};
+                        Mood::CURIOUS, Mood::YAWN, Mood::LOOK_AROUND, Mood::WINK, Mood::PLAYFUL, Mood::STRETCH,
+                        Mood::PEEK, Mood::GIGGLE, Mood::SNEEZE, Mood::SASSY};
   long frames = 0;
   bool held = false, upside = false;
   for (; now < 3u * 3600u * 1000u; now += 16 + (esp_random() % 30)) { // ~3 h, 20-50 FPS
@@ -34,13 +35,16 @@ int main() {
     dt = (now - prev) / 1000.0f;
     prev = now;
     uint32_t r100 = esp_random() % 1000;
-    if (r100 < 4) c.react(moods[esp_random() % 18], now, 400 + esp_random() % 2500);
-    else if (r100 < 6) c.reactPassive(moods[esp_random() % 18], now, 600);
+    if (r100 < 4) c.react(moods[esp_random() % (sizeof(moods) / sizeof(moods[0]))], now, 400 + esp_random() % 2500);
+    else if (r100 < 6) c.reactPassive(moods[esp_random() % (sizeof(moods) / sizeof(moods[0]))], now, 600);
     else if (r100 < 7) { c.impact((esp_random() % 41) - 20.0f, (esp_random() % 41) - 20.0f); c.react(Mood::DIZZY, now, DIZZY_ANIM_MS); }
     else if (r100 < 9) c.shake((esp_random() % 130) / 100.0f);
     else if (r100 < 10) c.startSleep(now, (esp_random() & 1) ? 0.0f : .3f);
     else if (r100 < 11) c.startWake(now, esp_random() & 1, esp_random() & 1);
-    else if (r100 < 12) c.showBattery(int(esp_random() % 120) - 10, now);
+    else if (r100 < 12) {
+      c.showBattery(int(esp_random() % 120) - 10, now);
+      moodSince = now; // an explicit new request legitimately restarts the readout
+    }
     else if (r100 < 13) eyes.setExpression(Expression(esp_random() % EXPRESSION_COUNT), (esp_random() % 130) / 100.0f);
     else if (r100 < 14) eyes.lookAt((esp_random() % 200) / 100.0f - 1, (esp_random() % 200) / 100.0f - 1);
     else if (r100 < 15) eyes.blink(Blinker::Type(esp_random() % 7));
@@ -66,10 +70,15 @@ int main() {
     }
     if (held && esp_random() % 400 == 0) c.huff(c.annoyance(), now);
     c.setTilt(sinf(now * .0007f), cosf(now * .0011f));
+    c.setMotionActivity((now / 3000) % 2 ? .7f : 0, now);
     c.applyInertia((esp_random() % 21) - 10.0f, (esp_random() % 21) - 10.0f);
     c.setDrowsiness((now / 7000) % 2 ? .8f : 0);
     c.update(dt, now);
     const EyeFrame *g = eyes.frames();
+    float pairDX=g[1].cx-g[0].cx,pairDY=g[1].cy-g[0].cy;
+    float pairDistance=sqrtf(pairDX*pairDX+pairDY*pairDY);
+    float pairUX=pairDX/fmaxf(1,pairDistance),pairUY=pairDY/fmaxf(1,pairDistance);
+    float leftEdge=-1e6f,rightEdge=1e6f;
     for (int i = 0; i < 2; ++i) {
       const float v[] = {g[i].cx, g[i].cy, g[i].rx, g[i].ry, g[i].tilt, g[i].bend,
                          g[i].topA, g[i].topB, g[i].topC, g[i].botA, g[i].botB, g[i].botC,
@@ -77,11 +86,23 @@ int main() {
                          g[i].heart, g[i].spiral, g[i].spiralPhase};
       for (float f : v) CHECK(isfinite(f), "t=%u eye %d non-finite value", now, i);
       CHECK(g[i].rx > 5 && g[i].rx < EYE_HALF_WIDTH * 1.25f, "t=%u eye %d rx=%.1f", now, i, g[i].rx);
-      CHECK(g[i].ry > 5 && g[i].ry < EYE_HALF_HEIGHT * 1.25f, "t=%u eye %d ry=%.1f", now, i, g[i].ry);
-      // The eye's far corner stays on the round screen.
-      float dx = fabsf(g[i].cx - SCREEN_CX) + g[i].rx * .7f, dy = fabsf(g[i].cy - SCREEN_CY) + g[i].ry * .7f;
-      CHECK(sqrtf(dx * dx + dy * dy) < SCREEN_RADIUS, "t=%u eye %d reaches off-screen", now, i);
+      CHECK(g[i].ry > 5 && g[i].ry < SCREEN_RADIUS, "t=%u eye %d ry=%.1f", now, i, g[i].ry);
+      // Check the actual rotated, bent ellipse, rather than a bounding-box
+      // corner that is outside a tall ellipse even when the eye fits safely.
+      float maxRadius2=0, ct=cosf(g[i].tilt), st=sinf(g[i].tilt);
+      for (int sample=0;sample<64;++sample) {
+        float a=sample*anim::TAU_F/64, ca=cosf(a), x=g[i].rx*ca;
+        float y=g[i].ry*sinf(a)+g[i].bend*ca*ca;
+        float dx=(x*ct-y*st)*(g[i].rightEye?-1:1),dy=x*st+y*ct;
+        float sx=g[i].cx+dx-SCREEN_CX,sy=g[i].cy+dy-SCREEN_CY;
+        maxRadius2=fmaxf(maxRadius2,sx*sx+sy*sy);
+        float projection=sx*pairUX+sy*pairUY;
+        if (i==0) leftEdge=fmaxf(leftEdge,projection); else rightEdge=fminf(rightEdge,projection);
+      }
+      CHECK(maxRadius2 < SCREEN_RADIUS*SCREEN_RADIUS,"t=%u eye %d outline radius=%.1f",now,i,sqrtf(maxRadius2));
     }
+    CHECK(rightEdge-leftEdge >= MIN_EYE_GAP*SCREEN_MIN_SIDE-.03f,
+          "t=%u eyes crowd together: gap=%.2f",now,rightEdge-leftEdge);
     CHECK(c.backlight() >= 0 && c.backlight() <= 1.0001f, "t=%u backlight %.2f", now, c.backlight());
     // Every mood but sleep must end (the longest scripted one is a few seconds);
     // following a finger lasts while the finger is held, then must end too.
@@ -93,7 +114,7 @@ int main() {
       if (esp_random() % 40 == 0) r.invalidate();
       r.compose(g);
       for (int p = 0; p < SCREEN_WIDTH * SCREEN_HEIGHT; ++p)
-        if (!inPalette(fb[p])) {
+        if (!inPalette(fb[p], r.getEyeColor(), r.batteryDisplayActive())) {
           CHECK(false, "t=%u pixel %d is not a blend of black and the two eye colours", now, p);
           break;
         }

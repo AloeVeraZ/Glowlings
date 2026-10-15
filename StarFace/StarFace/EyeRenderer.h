@@ -55,21 +55,49 @@ class EyeRenderer {
  public:
   void begin(uint16_t *framebuffer, PushWindowFn pushFn);
   void invalidate() { fullRedraw = true; }
-  void setEyeColor(uint32_t rgb) { if (eyeColor != rgb) { eyeColor = rgb; invalidate(); } }
+  void setEyeColor(uint32_t rgb);
+  uint32_t getEyeColor() const { return eyeColor; }
+  void setBatteryDisplay(int percent, float morph, float swirl, bool charging = false, float phase = 0,
+                         uint32_t displayColor = UINT32_MAX);
+  uint32_t getBatteryColor() const { return batteryCharging ? BATTERY_CHARGING_COLOR : batteryColor; }
+  bool batteryDisplayActive() const { return batteryMorph > 0; }
+  void setFaceCharging(float amount, float phase) { faceCharge = amount; faceChargePhase = phase; }
   void draw(const EyeFrame eyes[2]);
   // Draws into the framebuffer without pushing (host previews, screenshots).
   void compose(const EyeFrame eyes[2]);
 
  private:
   struct Box { int x0, y0, x1, y1; };
+  struct Bubble { float x, y, radius, pad; bool merge; };
   uint16_t *fb = nullptr;
   PushWindowFn push = nullptr;
   bool fullRedraw = true;
   uint32_t eyeColor = EYE_COLOR;
+  uint16_t eyeShades[256] = {}; // cached black-to-eye shades for anti-aliasing and glow
+  int batteryPercent = -1;
+  float batteryMorph = 0, batterySwirl = 0;
+  bool batteryCharging = false;
+  uint32_t batteryColor = EYE_COLOR;
+  float batteryChargePhase = 0;
+  float faceCharge = 0, faceChargePhase = 0;
+  bool opaqueBatteryCached = false, cachedCharging = false;
+  int cachedPercent = -2;
+  int cachedBatteryFrame = -1;
+  uint32_t cachedBatteryColor = 0;
   Box prev = {0, 0, -1, -1}, dirty = {0, 0, -1, -1};
 
   static Box bounds(const EyeFrame &e);
   static Box cheekBounds(const EyeFrame &e);
-  void renderEye(const EyeFrame &e, const Box &clip);
+  void renderEye(const EyeFrame &e, const Box &clip, const Bubble *bubble = nullptr);
+  int chargingBubbles(const EyeFrame &e, Bubble bubbles[CHARGE_BUBBLES]) const;
+  static Box bubbleBounds(const Bubble &bubble);
+  void renderBubble(const Bubble *stream, int count, int index, const Box &clip);
+  void brighten(uint16_t &pixel, float alpha) const;
   void renderCheek(const EyeFrame &e, const Box &clip);
+  void renderBattery(float opacity);
+  void buildEyeShades();
+  uint16_t eyeShade(float alpha) const {
+    int index = int(alpha * 255 + .5f);
+    return eyeShades[index < 0 ? 0 : index > 255 ? 255 : index];
+  }
 };

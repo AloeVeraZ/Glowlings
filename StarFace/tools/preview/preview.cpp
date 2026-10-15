@@ -18,13 +18,13 @@
 static uint16_t fb[SCREEN_WIDTH * SCREEN_HEIGHT];
 static int badFrames = 0;
 
-static void writePPM(const std::string &path) {
+static void writePPM(const std::string &path, uint32_t eyeColor = EYE_COLOR, bool batteryReadout = false) {
   FILE *f = fopen(path.c_str(), "wb");
   if (!f) { perror(path.c_str()); exit(1); }
   fprintf(f, "P6\n%d %d\n255\n", SCREEN_WIDTH, SCREEN_HEIGHT);
   int bad = 0;
   for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; ++i) {
-    if (!inPalette(fb[i])) ++bad;
+    if (!inPalette(fb[i], eyeColor, batteryReadout)) ++bad;
     uint16_t c = uint16_t((fb[i] << 8) | (fb[i] >> 8));
     uint8_t rgb[3] = {uint8_t(((c >> 11) & 31) * 255 / 31), uint8_t(((c >> 5) & 63) * 255 / 63),
                       uint8_t((c & 31) * 255 / 31)};
@@ -53,7 +53,7 @@ struct Sim {
   void shot(const std::string &path) {
     r.invalidate();
     r.compose(eyes.frames());
-    writePPM(path);
+    writePPM(path, r.getEyeColor(), r.batteryDisplayActive());
   }
 };
 
@@ -107,6 +107,10 @@ int main(int argc, char **argv) {
       {"surprised", Mood::SURPRISED, 1600, 260}, {"dizzy", Mood::DIZZY, DIZZY_ANIM_MS, 1050},
       {"shy", Mood::SHY, 2000, 900},        {"petted", Mood::PETTED, 2000, 900},
       {"confused", Mood::CONFUSED, 1600, 800}, {"loved", Mood::LOVED, 1800, 900},
+      {"wink", Mood::WINK, 760, 180}, {"playful", Mood::PLAYFUL, 1600, 650},
+      {"stretch", Mood::STRETCH, 1700, 700},
+      {"peek", Mood::PEEK, 1450, 380}, {"giggle", Mood::GIGGLE, 1600, 520},
+      {"sneeze", Mood::SNEEZE, 1250, 340}, {"sassy", Mood::SASSY, 1500, 680},
     };
     for (const Shot &s : shots) {
       Sim sim;
@@ -168,12 +172,49 @@ int main(int argc, char **argv) {
     }
     Sim sim;
     sim.wake();
+    if(name=="iphone-battery") {
+      for(int level:{-1,0,10,50,92,100}) for(bool powered:{false,true}) {
+        sim.c.setBatteryLevel(level,powered);sim.c.showBattery(level,sim.now);sim.run(900);
+        char buf[80];snprintf(buf,sizeof(buf),"/iphone-battery_%d_%d.ppm",level,int(powered));
+        sim.shot(out+buf);sim.run(BATTERY_SHOW_MS);
+      }
+      return finish();
+    }
+    if (name == "charging-blink" || name == "fluid" || name == "joyful-charge") {
+      sim.eyes.setAutoBlink(false); sim.eyes.setIdle(false);
+      sim.c.setBatteryLevel(name == "fluid" ? 100 : 92,name != "fluid"); sim.run(2400);
+      int count=name == "joyful-charge" ? 300 : 150;
+      for (int frame=0;frame<count;++frame) {
+        if (frame==(name == "charging-blink" ? 30 : 80)) sim.eyes.blink();
+        if (frame==(name == "charging-blink" ? 80 : 210)) sim.eyes.wink(1);
+        char buf[64];snprintf(buf,sizeof(buf),"/%s_%03d.ppm",name.c_str(),frame);
+        sim.shot(out+buf);sim.run(32);
+      }
+      return finish();
+    }
     uint32_t total = 1200, step = 66;
     if (name == "wake") { sim.c.startSleep(sim.now, 0); sim.run(SLEEP_SEQUENCE_MS + 500);
                           sim.c.startWake(sim.now, false); total = 3600; step = 200; }
     else if (name == "sleep") { sim.c.startSleep(sim.now, .3f); total = SLEEP_SEQUENCE_MS; step = 300; }
+    else if (name == "charging") { sim.c.setBatteryLevel(88, true); total = 4800; step = 80; }
     else if (name == "shake") { sim.c.impact(14, 4); sim.c.react(Mood::DIZZY, sim.now, DIZZY_ANIM_MS);
                                 total = DIZZY_ANIM_MS + ANGRY_ANIM_MS + 2000; step = 250; }
+    else if (name == "environment") {
+      sim.c.setIdleActsAllowed(true);
+      int frame=0;
+      for (uint32_t ms=0;ms<=16000;ms+=40) {
+        bool moving=ms>=4000 && ms<7000,walking=ms>=7000 && ms<11000;
+        sim.c.setMotionActivity(moving?.7f:walking?.2f:0,sim.now);
+        sim.c.setTilt(moving?.7f:walking?.18f*sinf(ms*.004f):0,moving?-.2f:0);
+        sim.c.setStillFor(ms<4000?ms:ms>=11000?ms-11000:0);
+        sim.c.setCarried(walking,false,walking && ms%400==0,3);
+        sim.c.setHeldUp(ms>=14000,sim.now);
+        char buf[64];snprintf(buf,sizeof(buf),"/environment_%03d.ppm",frame++);
+        sim.shot(out+buf);
+        sim.now+=40;sim.c.update(.04f,sim.now);
+      }
+      return finish();
+    }
     else if (name == "rattle") {
       // A hand shake as the sketch reports it: strokes every ~128 ms that
       // reverse direction, a live shake level, and the dizzy spell after the
@@ -218,6 +259,14 @@ int main(int argc, char **argv) {
       return finish();
     }
     else if (name == "surprised") { sim.c.react(Mood::SURPRISED, sim.now, 1600); total = 900; step = 50; }
+    else if (name == "wink") { sim.c.react(Mood::WINK, sim.now, 760); total = 1100; step = 48; }
+    else if (name == "playful") { sim.c.react(Mood::PLAYFUL, sim.now, 1600); total = 1900; step = 48; }
+    else if (name == "stretch") { sim.c.react(Mood::STRETCH, sim.now, 1700); total = 1900; step = 48; }
+    else if (name == "peek") { sim.c.react(Mood::PEEK, sim.now, 1450); total = 1900; step = 40; }
+    else if (name == "giggle") { sim.c.react(Mood::GIGGLE, sim.now, 1600); total = 2000; step = 40; }
+    else if (name == "sneeze") { sim.c.react(Mood::SNEEZE, sim.now, 1250); total = 1700; step = 40; }
+    else if (name == "sassy") { sim.c.react(Mood::SASSY, sim.now, 1500); total = 1900; step = 40; }
+    else if (name == "boop") { sim.c.setTouchPoint(65,110); sim.c.react(Mood::BOOP, sim.now, 900); total = 1500; step = 40; }
     else if (name == "angry") { sim.c.react(Mood::ANGRY, sim.now, ANGRY_ANIM_MS); total = 1000; step = 60; }
     else if (name == "gaze") { sim.c.setPointer(1, 0, sim.now); sim.c.setPointerHeld(true, sim.now);
                                sim.c.react(Mood::FOLLOWING, sim.now, 3000); total = 700; step = 50; }

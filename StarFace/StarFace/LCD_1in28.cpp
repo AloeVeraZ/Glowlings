@@ -373,6 +373,14 @@ void LCD_1IN28_Sleep(void)
     DEV_Delay_ms(120);
 }
 
+void LCD_1IN28_Wake(void)
+{
+    LCD_1IN28_SendCommand(0x11); // sleep-out retains the framebuffer contents
+    DEV_Delay_ms(120);
+    LCD_1IN28_SendCommand(0x29); // display-on
+    DEV_Delay_ms(20);
+}
+
 /********************************************************************************
 function:	Sets the start position and size of the display area
 parameter:
@@ -440,12 +448,20 @@ void LCD_1IN28_Display(UWORD *Image)
 
 void LCD_1IN28_DisplayWindows(UWORD Xstart, UWORD Ystart, UWORD Xend, UWORD Yend, UWORD *Image)
 {
+    if (Xstart >= Xend || Ystart >= Yend || Xend > LCD_1IN28_WIDTH || Yend > LCD_1IN28_HEIGHT) return;
     // display
     UDOUBLE Addr = 0;
 
     UWORD j;
     LCD_1IN28_SetWindows(Xstart, Ystart, Xend , Yend);
     DEV_Digital_Write(LCD_DC_PIN, 1);;
+    // Full-width rectangles are contiguous in the framebuffer. One transfer
+    // avoids taking the SPI lock and setting up a transaction for every row.
+    if (Xstart == 0 && Xend == LCD_1IN28_WIDTH) {
+        DEV_SPI_Write_nByte((uint8_t *)&Image[Ystart * LCD_1IN28_WIDTH],
+                           (Yend - Ystart) * LCD_1IN28_WIDTH * 2);
+        return;
+    }
     for (j = Ystart; j < Yend ; j++) {
         Addr = Xstart + j * LCD_1IN28_WIDTH ;
         DEV_SPI_Write_nByte((uint8_t *)&Image[Addr], (Xend-Xstart)*2);
@@ -458,4 +474,3 @@ void LCD_1IN28_DisplayPoint(UWORD X, UWORD Y, UWORD Color)
     LCD_1IN28_SetWindows(X,Y,X,Y);
     LCD_1IN28_SendData_16Bit(Color);
 }
-

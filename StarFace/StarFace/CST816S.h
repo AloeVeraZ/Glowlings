@@ -58,8 +58,13 @@ class CST816S {
   public:
     CST816S(int sda, int scl, int rst, int irq);
     void begin(int interrupt = RISING);
+    // Listen immediately after CPU wake, before display/IMU initialization.
+    // This does not reset the touch chip or discard an incoming press.
+    void listen(int interrupt = FALLING);
     void sleep();
     bool available();
+    bool hasPending() const { return _event_available; }
+    void clearPending() { _event_available = false; }
     data_struct data;
     String gesture();
 
@@ -69,10 +74,10 @@ class CST816S {
     int _scl;
     int _rst;
     int _irq;
-    bool _event_available;
+    volatile bool _event_available = false;
 
     void IRAM_ATTR handleISR();
-    void read_touch();
+    bool read_touch();
 
     uint8_t i2c_read(uint16_t addr, uint8_t reg_addr, uint8_t * reg_data, uint32_t length);
     uint8_t i2c_write(uint8_t addr, uint8_t reg_addr, const uint8_t * reg_data, uint32_t length);
