@@ -82,4 +82,3 @@ for page,(name,title) in enumerate(pages):
     rgb[18].save(args.output/f"{name}-check.png")
 
     print(f"{path.name}: {len(labels)} tiles, {len(frames)} frames, {path.stat().st_size:,} bytes",flush=True)
-
