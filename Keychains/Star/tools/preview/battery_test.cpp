@@ -473,8 +473,7 @@ int main(int argc, char **argv) {
     }
     creature.setBatteryLevel(level, false); // unplug while readout is open
     creature.update(.016f, 11300); eyes.draw();
-    for (int y = 155; y <= 180; ++y) for (int x = 106; x <= 127; ++x)
-      CHECK(fb[y * SCREEN_WIDTH + x] == 0); // lightning bolt cleared immediately
+    for(uint16_t pixel:fb) CHECK(inPalette(pixel,renderer.getBatteryColor(),true)); // no green liquid remains after unplug
     for (uint32_t now = 11316; now <= 14500; now += 16) creature.update(.016f, now);
     eyes.draw(); CHECK(!renderer.batteryDisplayActive());
     for (uint16_t pixel : fb) CHECK(inPalette(pixel, renderer.getEyeColor()));
@@ -504,8 +503,7 @@ int main(int argc, char **argv) {
     CHECK(renderer.getBatteryColor() == normal.color()); // green ends with the charge, not later
     CHECK(renderer.getEyeColor() != renderer.getBatteryColor()); // the bar bypasses the slow green eye fade
     for (uint16_t pixel : fb) CHECK(inPalette(pixel, normal.color(), true));
-    for (int y = 155; y <= 180; ++y) for (int x = 106; x <= 127; ++x)
-      CHECK(fb[y * SCREEN_WIDTH + x] == 0); // bolt cleared while the readout remains open
+    CHECK(fb[130*SCREEN_WIDTH+120]!=0); // the measured liquid level remains visible after unplug
     supply.sample(4.15f, began + 4200, BATTERY_LIVE_POWER_CHECK_MS);
     supply.sample(4.15f, began + 4300, BATTERY_LIVE_POWER_CHECK_MS);
     CHECK(supply.charging && supply.percent == 88);
@@ -581,6 +579,38 @@ int main(int argc, char **argv) {
     spike.sample(4.095f,began+2300,100); spike.sample(4.095f,began+2400,100);
     CHECK(spike.charging && spike.percent==88); // small near-full replug, without five seconds of waiting
 
+    // Replug after relaxation: the last unplug observation and the SOC filter
+    // still sit above the actual low plateau. An edge must use recent samples.
+    BatterySupply relaxed;
+    relaxed.restore(4.13f,91);
+    relaxed.sample(4.10f,began,100); relaxed.sample(4.10f,began+100,100);
+    relaxed.sample(4.135f,began+200,100);
+    relaxed.sample(4.135f,began+300,100);
+    CHECK(!relaxed.charging);
+    relaxed.sample(4.135f,began+400,100);
+    CHECK(relaxed.charging && relaxed.percent==91);
+    for(int cycle=0;cycle<4;++cycle) {
+      uint32_t t=1000+cycle*6000;
+      float peak=4.135f-cycle*.020f;
+      for(uint32_t age=0;age<3500;age+=100) relaxed.sample(peak-.030f,began+t+age,100);
+      CHECK(!relaxed.charging);
+      relaxed.sample(peak-.055f,began+t+3500,100); relaxed.sample(peak-.055f,began+t+3600,100);
+      for(uint32_t age=3700;age<=3900;age+=100) relaxed.sample(peak-.020f,began+t+age,100);
+      CHECK(relaxed.charging && relaxed.percent==91);
+    }
+    // A single low ADC glitch followed by a stable return is not a cable edge.
+    BatterySupply lowSpike;lowSpike.restore(4.13f,91);
+    for(uint32_t ms=0;ms<1000;ms+=100) lowSpike.sample(4.13f,began+ms,100);
+    lowSpike.sample(4.08f,began+1000,100);
+    for(uint32_t ms=1100;ms<3000;ms+=100) lowSpike.sample(4.13f,began+ms,100);
+    CHECK(!lowSpike.charging);
+    // The connected-board trace rose ~35 mV over 80 seconds. Resetting the
+    // trend every ten seconds erased this evidence before it could qualify.
+    BatterySupply gradual;gradual.restore(4.049f,91);
+    for(uint32_t ms=0;ms<=100000 && !gradual.charging;ms+=100)
+      gradual.sample(4.049f+ms*.00000045f+noise(),began+ms,100);
+    CHECK(gradual.charging && gradual.percent<=91);
+
     BatterySupply top;
     top.restore(4.20f,98,true,4.20f);
     for (uint32_t ms=0;ms<=120000;ms+=100) top.sample(4.20f,began+ms,100);
@@ -643,6 +673,15 @@ int main(int argc, char **argv) {
     for(int i=0;i<SCREEN_WIDTH*SCREEN_HEIGHT;++i) baseline[i]=fb[i];
     for(int phase=0;phase<24;++phase) {
       renderer.setFaceCharging(1,phase/24.0f);renderer.compose(closed);
+      for(int i=0;i<SCREEN_WIDTH*SCREEN_HEIGHT;++i) CHECK(fb[i]==baseline[i]);
+    }
+    // Near-closed lids must also be clean, before the final zero-aperture frame.
+    EyeFrame narrow[2]={closed[0],closed[1]};
+    for(auto &f:narrow) { f.topA=-f.ry*.08f; f.botA=f.ry*.08f; }
+    renderer.setFaceCharging(0,0);renderer.compose(narrow);
+    for(int i=0;i<SCREEN_WIDTH*SCREEN_HEIGHT;++i) baseline[i]=fb[i];
+    for(int phase=0;phase<24;++phase) {
+      renderer.setFaceCharging(1,phase/24.0f);renderer.compose(narrow);
       for(int i=0;i<SCREEN_WIDTH*SCREEN_HEIGHT;++i) CHECK(fb[i]==baseline[i]);
     }
     EyeFrame wink[2]={open[0],closed[1]};

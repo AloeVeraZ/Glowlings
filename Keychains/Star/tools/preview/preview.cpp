@@ -53,7 +53,7 @@ struct Sim {
   void shot(const std::string &path) {
     r.invalidate();
     r.compose(eyes.frames());
-    writePPM(path, r.getEyeColor(), r.batteryDisplayActive());
+    writePPM(path, r.batteryDisplayActive()?r.getBatteryColor():r.getEyeColor(), r.batteryDisplayActive());
   }
 };
 
@@ -172,10 +172,10 @@ int main(int argc, char **argv) {
     }
     Sim sim;
     sim.wake();
-    if(name=="iphone-battery") {
-      for(int level:{-1,0,10,50,92,100}) for(bool powered:{false,true}) {
+    if(name=="battery" || name=="iphone-battery") {
+      for(int level:{-1,0,1,3,4,6,7,8,10,25,50,73,88,91,92,99,100}) for(bool powered:{false,true}) {
         sim.c.setBatteryLevel(level,powered);sim.c.showBattery(level,sim.now);sim.run(900);
-        char buf[80];snprintf(buf,sizeof(buf),"/iphone-battery_%d_%d.ppm",level,int(powered));
+        char buf[80];snprintf(buf,sizeof(buf),"/battery_%d_%d.ppm",level,int(powered));
         sim.shot(out+buf);sim.run(BATTERY_SHOW_MS);
       }
       return finish();

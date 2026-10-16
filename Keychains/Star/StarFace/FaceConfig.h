@@ -28,7 +28,7 @@ static constexpr uint32_t EYE_COLOR = 0xB04DFF;     // brighter violet; battery 
 static constexpr uint32_t BATTERY_YELLOW_COLOR = 0xFFD43B;
 static constexpr uint32_t BATTERY_RED_COLOR = 0xFF3038;
 static constexpr uint32_t BATTERY_CHARGING_COLOR = 0x38ED86;
-static constexpr int CHARGE_BUBBLES = 6;            // per eye: bubbles rising from the USB-C port while charging
+static constexpr int CHARGE_BUBBLES = 3;            // per eye: six staggered drops keep the ESP32 responsive
 static constexpr uint32_t PUPIL_COLOR = 0x000000;   // the big irises, hearts and spirals: black (purple and black only)
 static constexpr bool GLOW = true;                  // a soft halo of EYE_COLOR around the eyes
 static constexpr float GLOW_STRENGTH = 0.95f;       // halo brightness at the eye's edge
@@ -247,6 +247,7 @@ static constexpr uint32_t CHARGE_SAG_CONFIRM_MS = 1000; // the sag must hold thi
 // creep down this fast, so an unplugged cell's slow relaxation can't drag it along.
 static constexpr float CHARGE_REF_SAG_VOLTS_PER_S = .00003f;
 static constexpr uint32_t CHARGE_TREND_MS = 10000;
+static constexpr uint32_t CHARGE_TREND_MAX_MS = 120000; // preserve a slow charging rise across short windows
 static constexpr uint32_t BATTERY_TRANSITION_MS = 20000; // hold gauge through cable/load transients
 static constexpr uint32_t BATTERY_RELAX_MS = 60000; // wait before upward battery-only correction
 static constexpr uint32_t BATTERY_PERCENT_STEP_MS = 10000; // maximum observed estimate change: 1%/10 s

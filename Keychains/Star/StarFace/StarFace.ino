@@ -73,6 +73,7 @@ uint32_t sleepRetryAt = 0, lastBatteryCheck = 0;
 uint8_t tapStreak = 0;
 uint32_t lastTapAt = 0;
 ScreenTapRun screenTaps;
+AlwaysOnGesture alwaysOnGesture;
 float dieTempC = 25.0f, batteryVolts = 0;
 int batteryPercent = -1;
 BatterySupply batterySupply;
@@ -167,7 +168,7 @@ void startWakeAnimation(uint32_t now, bool fromShake, bool touched = false) {
 }
 
 void startSleepAnimation(uint32_t now) {
-  if (RAW_IMU_SERIAL_ONLY && !batteryLow()) return;
+  if ((RAW_IMU_SERIAL_ONLY || awakeLimit.alwaysOn) && !batteryLow()) return;
   sleepingShake = LeftRightWakeCheck();
   sleepPreparing = true;
   deepSleepPlanned = AUTO_DEEP_SLEEP || batteryLow();
@@ -377,6 +378,16 @@ void finishHold(const TouchTracker::Result &r, uint32_t now) {
   }
 }
 
+void toggleAlwaysOn(uint32_t now) {
+  if(batteryLow()) return;
+  awakeLimit.alwaysOn=!awakeLimit.alwaysOn;
+  recordActivity(now);
+  sleepPreparing=deepSleepPlanned=false;
+  screenTaps=ScreenTapRun();
+  creature.setAlwaysOn(awakeLimit.alwaysOn,now);
+  FACE_LOG(printf,"Always-on mode %s (tap, then hold)\n",awakeLimit.alwaysOn?"enabled":"disabled");
+}
+
 uint8_t rawTouchFingerCount();
 bool confirmedTouchContact() { return rawTouchFingerCount() == 1; }
 
@@ -450,6 +461,12 @@ void handleTouch(uint32_t now) {
   } else {
     if (r.kind == TouchTracker::NONE) r = finger.poll(now); // a lift report can go missing
     if (touchStuck && !finger.down) touchStuck = false;
+  }
+  bool modeConsumed=alwaysOnGesture.feed(r,now,!creature.batteryDisplayActive(now));
+  if(alwaysOnGesture.poll(finger.tracking(),now)) toggleAlwaysOn(now);
+  if(modeConsumed || alwaysOnGesture.reserved()) {
+    creature.setPointerHeld(false,now);
+    return;
   }
   switch (r.kind) {
     case TouchTracker::PRESS:
@@ -1514,7 +1531,7 @@ void loop() {
   }
   if (TOUCH_ENABLED && !touchStuck && sleepPreparing && confirmedTouchContact())
     cancelSleepForTouch(now);
-  creature.setPointerHeld(finger.tracking() && !touchStuck, now);
+  creature.setPointerHeld(finger.tracking() && !touchStuck && !alwaysOnGesture.reserved(), now);
   uint32_t timeout = idleTimeout();
   if (sleepPreparing) {
     // Napping keeps the screen on. Only planned deep sleep or a nearly empty
@@ -1522,7 +1539,7 @@ void loop() {
     if (creature.sleepFinished(now) && deepSleepPlanned && int32_t(now - sleepRetryAt) >= 0) {
       if (enterDeepSleep(true)) return;
     }
-  } else if (!RAW_IMU_SERIAL_ONLY && int32_t(now - sleepRetryAt) >= 0 &&
+  } else if (!RAW_IMU_SERIAL_ONLY && !awakeLimit.alwaysOn && int32_t(now - sleepRetryAt) >= 0 &&
              (AUTO_DEEP_SLEEP ? awakeLimit.closingDue(now) : now - lastActivity >= sleepAnimationDelay(timeout))) {
     startSleepAnimation(AUTO_DEEP_SLEEP ? awakeLimit.closingAt() : now);
   }
@@ -1531,8 +1548,8 @@ void loop() {
     if (AUTO_DEEP_SLEEP) timeout = awakeLimit.timeout;
     float idle = idleElapsed / float(timeout);
     // Lively right up to the end: heavy lids only in the last couple of seconds.
-    creature.setDrowsiness(RAW_IMU_SERIAL_ONLY ? 0.0f : anim::smoothstep(.82f, 1.0f, idle));
-    creature.setIdleActsAllowed(RAW_IMU_SERIAL_ONLY || idleElapsed + 1800 < timeout);
+    creature.setDrowsiness((RAW_IMU_SERIAL_ONLY || awakeLimit.alwaysOn) ? 0.0f : anim::smoothstep(.82f, 1.0f, idle));
+    creature.setIdleActsAllowed(RAW_IMU_SERIAL_ONLY || awakeLimit.alwaysOn || idleElapsed + 1800 < timeout);
   }
   renderFrame();
   delay(1);
