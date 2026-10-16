@@ -221,9 +221,21 @@ bool CreatureAnimator::sleepFinished(uint32_t now) const {
 
 void CreatureAnimator::setPointer(float x, float y, uint32_t now) {
   if (touchAngerPauseActive(now)) return;
+  centeredRest=false;
   pointerX = clampf(x, -1.0f, 1.0f);
   pointerY = clampf(y, -1.0f, 1.0f);
   pointerAt = now;
+}
+
+void CreatureAnimator::centerAfterHold(uint32_t now) {
+  if(current==Mood::SLEEPY || current==Mood::BATTERY || touchAngerPauseActive(now))return;
+  pointerHeld=false;pointerX=pointerY=0;pointerAt=now-1300;
+  holdAnnoy=0;tiltX=swingX=0;centeredRest=true;centeredSince=now;
+  if(current==Mood::FOLLOWING)enterMood(Mood::IDLE,now,0);
+  ownedGaze=true;
+  eyes->setGazeBias(0,tiltY);
+  eyes->setLookOffset(0,swingY);
+  eyes->lookAt(0,tiltY,1.8f);
 }
 
 void CreatureAnimator::applyInertia(float ax, float ay) {
@@ -725,6 +737,8 @@ void CreatureAnimator::sleepScript(uint32_t now, Expression &e, float &k, float 
 // ---- Gaze: the pointer, mood-specific looks, or the eyes' own idle wandering ----
 
 void CreatureAnimator::updateGaze(uint32_t now) {
+  bool manualCentered=centeredRest && now-centeredSince<TOUCH_CENTER_REST_MS;
+  if(!manualCentered)centeredRest=false;
   eyes->setGazeBias(touchAngerProtected ? 0 : tiltX, touchAngerProtected ? 0 : tiltY);
   // The face stays level and the eyes keep looking at you while it is swung
   // (not while waking or asleep).
@@ -733,8 +747,8 @@ void CreatureAnimator::updateGaze(uint32_t now) {
   bool expand = awake && current != Mood::BATTERY;
   eyes->setPresence(expand ? fmaxf(motionLevel,expressive ? .75f : 0)*(1-.45f*batteryFatigue) : 0,expand);
   eyes->setFaceRoll(awake ? faceRoll : 0.0f);
-  eyes->setLookOffset(awake && !touchAngerProtected ? swingX : 0.0f,
-                      awake && !touchAngerProtected ? swingY : 0.0f);
+  eyes->setLookOffset(awake && !touchAngerProtected && !manualCentered ? swingX : 0.0f,
+                      awake && !touchAngerProtected && !manualCentered ? swingY : 0.0f);
   // Interested pupils: a little wider while something is going on.
   float attention = fminf(1.0f, sqrtf(tiltX * tiltX + tiltY * tiltY) + (pointerHeld ? .6f : 0.0f)
                                + (heldUp ? .6f : 0.0f) + (walking ? .3f : 0.0f));
@@ -826,12 +840,17 @@ void CreatureAnimator::updateGaze(uint32_t now) {
     gx = tiltX; gy = tiltY;
     own = true; speed = fmaxf(speed, 1.6f);
   }
+  // Keep the manual center through release and for five seconds afterward.
+  // New touch, critical sleep and the battery screen keep their priorities.
+  if(manualCentered && awake && current!=Mood::BATTERY && !usePointer) {
+    own=true;gx=gy=0;speed=fmaxf(speed,1.8f);
+  }
   if (own) eyes->lookAt(gx, gy, speed);
   else if (ownedGaze) eyes->lookAround();   // a reaction ended: tilt and idle looks take over at once
   ownedGaze = own;
   bool sacOn = current != Mood::DIZZY && current != Mood::SLEEPY && current != Mood::BATTERY &&
                !(current == Mood::WAKE_UP && age < 900);
-  eyes->setSaccades(sacOn && !touchAngerProtected, current == Mood::ANGRY || current == Mood::ANXIOUS);
+  eyes->setSaccades(sacOn && !touchAngerProtected && !manualCentered, current == Mood::ANGRY || current == Mood::ANXIOUS);
 }
 
 // ---- Body: the pair of eyes as one mass, with weight, inertia and recoil ----

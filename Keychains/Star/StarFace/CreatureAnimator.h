@@ -81,6 +81,8 @@ class CreatureAnimator {
   // How long it has been lying perfectly still (it gets bored, then sleepy).
   void setStillFor(uint32_t ms) { stillMs = ms; }
   void setPointer(float x, float y, uint32_t now);
+  void centerAfterHold(uint32_t now);
+  void keepCenterHeld(uint32_t now) { if(centeredRest)centeredSince=now; }
   // A finger is on the screen. The longer it stays, the angrier it gets.
   void setPointerHeld(bool held, uint32_t now) {
     if (touchAngerPauseActive(now)) { pointerHeld = false; return; }
@@ -158,6 +160,8 @@ class CreatureAnimator {
   float pointerX = 0, pointerY = 0;
   uint32_t pointerAt = 0, holdSince = 0;
   bool pointerHeld = false, upsideDown = false;
+  bool centeredRest = false;
+  uint32_t centeredSince = 0;
   uint32_t upsideSince = 0;
   float holdAnnoy = 0;
   float angerResidue = 1, grumpy = 0;

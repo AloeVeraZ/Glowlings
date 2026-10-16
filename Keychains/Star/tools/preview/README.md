@@ -102,3 +102,18 @@ wake capture still uses the shorter 150 ms window. References ease independently
 of the orientation integrator and eye springs; up/down behavior is unchanged.
 Raw held-heading layout fixtures explicitly disable the periodic policy so they
 can continue testing geometry and return paths beyond the idle-refresh interval.
+
+## Manual center on a single hold
+
+`manual_center_test.cpp` reproduces a rightward motion origin, a centered finger
+hold, and release. It checks that the current horizontal pose is adopted without
+changing the vertical reference, that stale pointer/motion targets do not return
+during the five-second centered rest, and that normal motion resumes after it.
+Gesture streams distinguish a first two-second hold from the tap-then-hold mode
+toggle, including exact-threshold release, long holds, drags, lost contact and
+timer rollover. Holding longer keeps the rest alive; release starts its full
+five seconds. New touch can interrupt the rest; critical sleep keeps priority.
+
+Connected-board check, October 15, 2026: after upload and flash-hash verification,
+the user confirmed that single-hold centering and the separate tap-then-hold
+always-on toggle both work. The six local regression checks also passed.

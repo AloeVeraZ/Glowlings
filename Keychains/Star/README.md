@@ -57,6 +57,15 @@ percentage nor a green animation proves charge completion.
 
 ## What it does
 
+**Manual center.** While awake, hold the first press still for two seconds to
+center the eyes. Release to adopt that steady pose as the horizontal reference
+and keep the gaze centered for five seconds. A fresh touch can interrupt this
+rest; normal motion and idle gaze resume afterward. Dragging does not activate
+manual centering. A tap followed by a second held press remains exclusively the
+always-on toggle; it does not invoke manual centering. Critical sleep and the
+battery screen keep priority.
+
+
 **Wake-relative left/right gaze.** Each real wake starts a fresh horizontal
 reference. Star waits for at least three valid readings spanning 150 ms of a
 steady pose, then uses that pose as the initial horizontal eye center.
@@ -141,7 +150,7 @@ timestamps. A reset can emit the ROM boot banner before the sketch starts.
   - **Leave it alone:** right up until it falls asleep its eyes keep moving (a new look every half second to few seconds, little micro-expressions in between), and every 2.4-4.8 seconds it does something by itself (looks around the room, a curious sideways look, a yawn, a happy squint, a puzzled look); the longer it is left alone, the more it gets bored and yawns, then it gets drowsy and falls asleep (`IDLE_SLEEP_MS`, 15 s after the last interaction).
   - **Warm** (pocket, hand, sun; the IMU chip above `HOT_C`): lazy yawns now and then. **Cold:** it shivers.
 - The pupils lead and the whole eyes follow a beat later; the second eye trails a fraction behind the first, fast moves squash and stretch the eyes slightly, and the eye on the side being looked toward grows a little (curious), so gaze reads as a small head turn. Left alone it looks around (often back at you), blinks at random (with doubles, half blinks and slow blinks) and shows brief micro-expressions: a squint, a curious lift, a sceptical look.
-- **Touch:** while a finger is on the screen the eyes follow it wherever it moves. A tap makes the nearer eye flinch first, then both rebound and settle; a double tap surprises them; **three or four quick taps** play the existing angry animation for 1.9 seconds. **Five consecutive screen taps** (no more than 650 ms apart) start a protected 3.5-second angry pause: the pointer stays still and reactions cannot restart its anger. Separate screen taps keep counting during the pause, so **ten consecutive taps while awake** can show the battery. It then resumes normal interaction and its usual brief sulk. Battery shutdown takes precedence over the pause. Touch still renews the sleep timer during the pause. A short gentle press is a pet (happy crescent eyes). **Holding on annoys it**: after about a second the lids lower, then it glares at your finger and trembles; let go and it huffs, then cools off over a few seconds.
+- **Touch:** while a finger is on the screen the eyes follow it wherever it moves. A tap makes the nearer eye flinch first, then both rebound and settle; a double tap surprises them; **three or four quick taps** play the existing angry animation for 1.9 seconds. **Five consecutive screen taps** (no more than 650 ms apart) start a protected 3.5-second angry pause: the pointer stays still and reactions cannot restart its anger. Separate screen taps keep counting during the pause, so **ten consecutive taps while awake** can show the battery. It then resumes normal interaction and its usual brief sulk. Battery shutdown takes precedence over the pause. Touch still renews the sleep timer during the pause. A short gentle press is a pet (happy crescent eyes). **A steady single hold of two seconds recenters it**; after release, it stays centered for five seconds. Before that threshold a held finger can briefly lower the lids. A dragged hold keeps its normal finger-following response.
 - **Everything works without the touch screen** (for example behind a protective Lexan cover), using the motion sensor:
 
   | Touch | Motion instead |

@@ -32,6 +32,9 @@ g++ -std=gnu++17 -O2 -Wall -I$SRC touch_test.cpp -o "$OUT/starface_touch_test"
 "$OUT/starface_touch_test"
 g++ -std=gnu++17 -O2 -Wall -Itouch_stubs -I$SRC touch_irq_test.cpp $SRC/CST816S.cpp -o "$OUT/starface_touch_irq_test"
 "$OUT/starface_touch_irq_test"
+g++ -std=gnu++17 -O2 -Wall -Istubs -I$SRC manual_center_test.cpp $SRC/EyeRenderer.cpp $SRC/Eyes.cpp $SRC/Expressions.cpp $SRC/CreatureAnimator.cpp -o "$OUT/starface_manual_center_test"
+"$OUT/starface_manual_center_test"
+
 g++ -std=gnu++17 -O2 -Wall -Istubs -I$SRC always_on_test.cpp $SRC/EyeRenderer.cpp $SRC/Eyes.cpp $SRC/Expressions.cpp $SRC/CreatureAnimator.cpp -o "$OUT/starface_always_on_test"
 "$OUT/starface_always_on_test"
 

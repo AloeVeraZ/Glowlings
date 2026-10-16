@@ -287,6 +287,12 @@ class WorldFollower {
     seeded=false; lastAt=0; heading.reset(); tiltX=swingX=0;
     panCenter=0; recenterSteady=recentering=false; recenterCount=0;
   }
+  // A touch release can adopt the current pose without restarting vertical
+  // fusion, the awake timer or the mode. Capture uses the usual stable window.
+  void requestHorizontalCenter() {
+    wakeRelative=true;originPending=true;originCandidate=false;
+    tiltX=swingX=0;recenterSteady=recentering=false;
+  }
   bool horizontalOriginReady() const { return wakeRelative && !originPending; }
   float horizontalOriginDegrees() const { return wakeCenter / .017453293f; }
   uint32_t horizontalRecenterCount() const { return recenterCount; }

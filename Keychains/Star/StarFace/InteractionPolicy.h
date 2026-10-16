@@ -81,6 +81,33 @@ struct AlwaysOnGesture {
   }
 };
 
+// The first press can center the face. A second press reserved for the mode
+// gesture is excluded by the caller. One action per hold; drags cancel it.
+struct HoldToCenterGesture {
+  bool candidate=false,latched=false,released=false;
+  uint32_t pressAt=0;
+  int x=0,y=0;
+  bool reserved() const { return latched; }
+  bool feed(const TouchTracker::Result &r,uint32_t now,bool allowed=true) {
+    released=false;
+    if(!allowed){candidate=latched=false;return false;}
+    if(r.kind==TouchTracker::PRESS){candidate=true;latched=false;x=r.x;y=r.y;pressAt=now;}
+    if(r.kind==TouchTracker::MOVE && candidate){
+      int dx=r.x-x,dy=r.y-y;if(dx*dx+dy*dy>20*20)candidate=latched=false;
+    }
+    if(r.kind==TouchTracker::RELEASE || r.kind==TouchTracker::TAP || r.kind==TouchTracker::SWIPE){
+      released=candidate && r.kind==TouchTracker::RELEASE && (latched || r.heldMs>=TOUCH_CENTER_PRESS_MS);
+      bool consumed=latched || released;candidate=latched=false;return consumed;
+    }
+    return latched;
+  }
+  bool poll(bool tracking,uint32_t now) {
+    if(!tracking){candidate=latched=false;return false;}
+    if(!candidate || latched || now-pressAt<TOUCH_CENTER_PRESS_MS)return false;
+    latched=true;return true;
+  }
+};
+
 inline bool confirmedTouchReport(uint8_t points, uint8_t event, uint8_t gesture,
                                  bool wasDown, bool validCoordinates) {
   if (points > 1 || event > 2) return false;

@@ -209,6 +209,8 @@ static constexpr float TAP_MAX_MOVE_PX = 22;      // ...and moves less than this
 static constexpr float SWIPE_MIN_PX = 35;         // a swipe flicks at least this far...
 static constexpr float SWIPE_MIN_SPEED = 250;     // ...at least this fast (px/s) at the end
 static constexpr uint32_t SWIPE_MAX_SHORT_MS = 700; // or: a press this short that moved far
+static constexpr uint32_t TOUCH_CENTER_PRESS_MS = 2000; // single steady press: manual center
+static constexpr uint32_t TOUCH_CENTER_REST_MS = 5000;  // centered gaze after release
 static constexpr uint32_t HOLD_ANGER_START_MS = 1200; // holding longer than this annoys it...
 static constexpr uint32_t HOLD_ANGER_FULL_MS = 4500;  // ...and by this long it is furious
 static constexpr uint32_t TOUCH_RELEASE_TIMEOUT_MS = 250; // no report this long = finger lifted

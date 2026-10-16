@@ -75,6 +75,7 @@ uint8_t tapStreak = 0;
 uint32_t lastTapAt = 0;
 ScreenTapRun screenTaps;
 AlwaysOnGesture alwaysOnGesture;
+HoldToCenterGesture holdToCenter;
 float dieTempC = 25.0f, batteryVolts = 0;
 int batteryPercent = -1;
 BatterySupply batterySupply;
@@ -389,6 +390,13 @@ void finishHold(const TouchTracker::Result &r, uint32_t now) {
   }
 }
 
+void centerAfterTouch(uint32_t now) {
+  if(batteryLow())return;
+  gazeWorld.requestHorizontalCenter();tiltX=0;
+  creature.centerAfterHold(now);
+  FACE_LOG(println,"Manual hold: adopting current horizontal center for five seconds");
+}
+
 void toggleAlwaysOn(uint32_t now) {
   if(batteryLow()) return;
   awakeLimit.alwaysOn=!awakeLimit.alwaysOn;
@@ -435,6 +443,7 @@ void handleTouch(uint32_t now) {
     }
   }
   if (creature.touchAngerPauseActive(now)) {
+    holdToCenter=HoldToCenterGesture();
     // Keep counting distinct taps so the same run can reach ten. Pointer and
     // other reactions stay paused; touches still renew the inactivity timer.
     if (touched) {
@@ -473,9 +482,13 @@ void handleTouch(uint32_t now) {
     if (r.kind == TouchTracker::NONE) r = finger.poll(now); // a lift report can go missing
     if (touchStuck && !finger.down) touchStuck = false;
   }
-  bool modeConsumed=alwaysOnGesture.feed(r,now,!creature.batteryDisplayActive(now));
+  bool allowed=!creature.batteryDisplayActive(now);
+  bool modeConsumed=alwaysOnGesture.feed(r,now,allowed);
   if(alwaysOnGesture.poll(finger.tracking(),now)) toggleAlwaysOn(now);
-  if(modeConsumed || alwaysOnGesture.reserved()) {
+  bool centerConsumed=holdToCenter.feed(r,now,allowed && !modeConsumed && !alwaysOnGesture.reserved());
+  if(holdToCenter.poll(finger.tracking(),now) || holdToCenter.released)centerAfterTouch(now);
+  if(holdToCenter.reserved())creature.keepCenterHeld(now);
+  if(modeConsumed || alwaysOnGesture.reserved() || centerConsumed || holdToCenter.reserved()) {
     creature.setPointerHeld(false,now);
     return;
   }
@@ -1549,7 +1562,7 @@ void loop() {
   }
   if (TOUCH_ENABLED && !touchStuck && sleepPreparing && confirmedTouchContact())
     cancelSleepForTouch(now);
-  creature.setPointerHeld(finger.tracking() && !touchStuck && !alwaysOnGesture.reserved(), now);
+  creature.setPointerHeld(finger.tracking() && !touchStuck && !alwaysOnGesture.reserved() && !holdToCenter.reserved(), now);
   uint32_t timeout = idleTimeout();
   if (sleepPreparing) {
     // Napping keeps the screen on. Only planned deep sleep or a nearly empty
