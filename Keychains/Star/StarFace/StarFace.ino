@@ -66,6 +66,7 @@ bool imuReady = false, wokeByShake = false;
 AwakeLimit awakeLimit;
 LeftRightWakeCheck sleepingShake;
 float tiltX = 0, tiltY = 0;
+WorldFollower gazeWorld;
 float linX = 0, linY = 0; // smoothed gravity-free acceleration
 TouchTracker finger;
 uint32_t lastTouchActionAt = 0, lastSwipeAt = 0;
@@ -159,7 +160,15 @@ bool reactMotion(Mood m, uint32_t now, uint32_t duration = 900) {
   return react(m, now, duration, false);
 }
 
+void startGazeSession() {
+  gazeWorld.beginWakeSession();
+  tiltX=0;
+  creature.setTilt(0,tiltY);
+  creature.setSwing(0,gazeWorld.swingY);
+}
+
 void startWakeAnimation(uint32_t now, bool fromShake, bool touched = false) {
+  startGazeSession();
   awakeLimit.start(now);
   sleepingShake = LeftRightWakeCheck();
   sleepPreparing = false;
@@ -256,7 +265,8 @@ void handleBatterySerial() {
         bool newlyConnected = !batterySupply.charging;
         batterySupply.confirmUsbPower();
         creature.setBatteryLevel(batterySupply.percent, true);
-        cancelClosingForCharge(awakeLimit, creature, sleepPreparing, deepSleepPlanned, newlyConnected, millis());
+        if(cancelClosingForCharge(awakeLimit, creature, sleepPreparing, deepSleepPlanned, newlyConnected, millis()))
+          startGazeSession();
         retainedBatteryGauge = batterySupply.snapshot();
         persistBatteryMemory(true);
         FACE_LOG(printf, "USB power confirmed by host; estimate retained at %d%%\n", batterySupply.percent);
@@ -288,6 +298,7 @@ void readBattery() {
   creature.setBatteryLevel(batteryPercent, batterySupply.charging);
   if (cancelClosingForCharge(awakeLimit, creature, sleepPreparing, deepSleepPlanned,
                             !wasCharging && batterySupply.charging, sampledNow)) {
+    startGazeSession();
     lastActivity = sampledNow;
     FACE_LOG(println, "Plug-in canceled closing; charging wake animation");
   }
@@ -850,7 +861,7 @@ void handleKnocks(uint32_t now) {
 // around, tossing it or bumping it get their own reactions. a and g are in the
 // canonical gesture frame; both receive the same visual rotation below.
 void followWorld(const float a[3], const float g[3], uint32_t now, bool allowReactions = true) {
-  static WorldFollower world;
+  WorldFollower &world=gazeWorld;
   float visualA[3] = {a[0],a[1],a[2]}, visualG[3] = {g[0]-gazeGyroBias[0],g[1]-gazeGyroBias[1],g[2]-gazeGyroBias[2]};
   const float *headingBias = gazeGyroBiasValid ? gazeGyroBias : HORIZONTAL_GYRO_BIAS_RAD_S;
   float visualHeadingG[3] = {g[0]-headingBias[0],g[1]-headingBias[1],g[2]-headingBias[2]};
@@ -859,7 +870,10 @@ void followWorld(const float a[3], const float g[3], uint32_t now, bool allowRea
   rotateMotionXY(visualHeadingG, GAZE_IMU_ROTATION);
   world.setFlatUpSign(gazeFlatUpSign);
   world.setHorizontalCenter(HORIZONTAL_TABLE_CENTER_DEG, HORIZONTAL_HANGING_CENTER_DEG);
+  bool hadOrigin=world.horizontalOriginReady();
   world.feed(visualA, visualG, shaker.strength, now, visualHeadingG);
+  if(!hadOrigin && world.horizontalOriginReady())
+    FACE_LOG(printf,"Wake gaze center captured: %.1f degrees (horizontal)\n",world.horizontalOriginDegrees());
   static int lastGazePosture = -1;
   int posture = world.uprightReferenceActive() ? 1 : 0;
   if (LOG_SHAKE && posture != lastGazePosture) {

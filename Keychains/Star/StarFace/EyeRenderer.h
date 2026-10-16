@@ -100,7 +100,6 @@ class EyeRenderer {
   void brighten(uint16_t &pixel, float alpha) const;
   void renderCheek(const EyeFrame &e, const Box &clip);
   void renderBattery(float opacity);
-  void renderModeIndicator();
   void buildEyeShades();
   uint16_t eyeShade(float alpha) const {
     int index = int(alpha * 255 + .5f);

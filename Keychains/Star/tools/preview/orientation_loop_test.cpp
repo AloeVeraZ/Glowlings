@@ -10,7 +10,7 @@ int main() {
   int fails=0;
   const float radians=.017453293f;
   for (int slowLeg : {-1,1,2,3}) for (int sign : {-1,1}) for (int period : {10,25,50}) {
-    WorldFollower world; world.setFlatUpSign(1);
+    WorldFollower world; world.setFlatUpSign(1); world.beginWakeSession();
     uint32_t now=1;
     float neutral[3]={0,9.81f,0},quiet[3]={};
     for (int i=0;i<1000;i+=period,now+=period) world.feed(neutral,quiet,0,now);
@@ -52,7 +52,7 @@ int main() {
   // Smooth right/up/left/down circles, with simultaneous changing axes,
   // include slow portions that a per-axis gyro cutoff would discard.
   for (int sign : {-1,1}) for (int period : {10,25,50}) {
-    WorldFollower world; world.setFlatUpSign(1);
+    WorldFollower world; world.setFlatUpSign(1); world.beginWakeSession();
     uint32_t now=1;
     float neutral[3]={0,9.81f,0},quiet[3]={};
     for (int i=0;i<1000;i+=period,now+=period) world.feed(neutral,quiet,0,now);

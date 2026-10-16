@@ -1,5 +1,6 @@
 // A labeled catalog is assembled from these real firmware frames by catalog.py.
 #include <stdio.h>
+#include <stdlib.h>
 #include <string>
 #include <vector>
 #include <memory>
@@ -114,7 +115,9 @@ const char* variants[]={"Normal blink","Fast blink","Long blink","Half blink","S
 int main(int argc,char**argv) {
  if(argc<2)return 1;
  const int tile=144,cols=4,rows=4,cellH=172,width=cols*tile,height=rows*cellH;
- for(int page=0;page<5;++page) {
+ int firstPage=argc>2?atoi(argv[2]):0,lastPage=argc>2?firstPage+1:5;
+ if(firstPage<0 || firstPage>4)return 2;
+ for(int page=firstPage;page<lastPage;++page) {
   int group=page==0?0:page==3?2:page==4?3:1,start=page==2?16:0,count=group==0?15:group==2?16:group==3?12:page==1?16:15;
   std::vector<std::unique_ptr<Scene>> scenes;
   char path[1024];snprintf(path,sizeof(path),"%s/page%d.tsv",argv[1],page);FILE *meta=fopen(path,"w");

@@ -280,6 +280,15 @@ class WorldFollower {
   float swingX = 0, swingY = 0, motionLevel = 0;
   bool spun = false, weightless = false;
   bool uprightReferenceActive() const { return wearPose; }
+  // Explicitly start a new awake interval. Touch renewals and brief sensor
+  // gaps must not move this origin after it has been captured.
+  void beginWakeSession() {
+    wakeRelative=true; originPending=true; originCandidate=false;
+    seeded=false; lastAt=0; heading.reset(); tiltX=swingX=0;
+  }
+  bool horizontalOriginReady() const { return wakeRelative && !originPending; }
+  float horizontalOriginDegrees() const { return wakeCenter / .017453293f; }
+
   // Caller supplies enclosure trim; generic screen-frame fixtures use zero.
   void setHorizontalCenter(float tableDegrees, float hangingDegrees) {
     tableCenter = tableDegrees*.017453293f;
@@ -296,8 +305,10 @@ class WorldFollower {
     if (lastAt && now - lastAt > 250) {
       seeded = false;
       // Refresh gravity after missed reads, but keep the held heading through
-      // a brief sensor/render stall. A long sleep starts a new heading reference.
-      if (now-lastAt > 2000) heading.reset();
+      // a brief sensor/render stall. Wake-relative sessions reset only through
+      // beginWakeSession(); legacy callers still reset after a long gap.
+      if (now-lastAt > 2000 && !wakeRelative) heading.reset();
+      if (originPending) originCandidate=false;
     }
     lastAt = now;
     spun = weightless = false;
@@ -375,8 +386,35 @@ class WorldFollower {
     // unsigned denominator folded 90..180 degrees back toward centre.
     float horizontalReference = wearPose ? hangingUpSign*up[1] : flatUpSign*up[2];
     float horizontalAngle = atan2f(-up[0],copysignf(sqrtf(pitchPlane),horizontalReference));
-    float horizontalCenter = wearPose ? hangingCenter : tableCenter;
-    float gx = HORIZONTAL_GAZE_SIGN*gentleAngle(horizontalAngle+pan-horizontalCenter,
+    if (originPending) {
+      // Use a brief quiet, valid gravity window, not the wake shake or a
+      // clipped/freefall sample. This never learns gyro bias from hand motion.
+      const float *originGyro=headingGyro ? headingGyro : g;
+      bool quiet=reliable && shakeStrength<2 && motion::len3(originGyro)<.20f;
+      if (!quiet) originCandidate=false;
+      else {
+        float unit[3]={a[0]/n,a[1]/n,a[2]/n};
+        float dot=unit[0]*originUp[0]+unit[1]*originUp[1]+unit[2]*originUp[2];
+        if (!originCandidate || dot<.9994f) {
+          for(int i=0;i<3;++i) originUp[i]=unit[i];
+          originCandidate=true; originSince=now; originSamples=1;
+        } else {
+          if(originSamples<255)++originSamples;
+          if(now-originSince>=150 && originSamples>=3) {
+            wakeCenter=horizontalAngle; originPending=false;
+            heading.reset();pan=0;tiltX=swingX=0;
+          }
+        }
+      }
+    }
+    float horizontalCenter = wakeRelative ? wakeCenter : (wearPose ? hangingCenter : tableCenter);
+    float relativeAngle=horizontalAngle-horizontalCenter;
+    if(wakeRelative) {
+      // Cross the atan2 seam by the short path instead of a full-screen jump.
+      if(relativeAngle>3.14159265f)relativeAngle-=6.28318531f;
+      if(relativeAngle<-3.14159265f)relativeAngle+=6.28318531f;
+    }
+    float gx = originPending ? 0 : HORIZONTAL_GAZE_SIGN*gentleAngle(relativeAngle+pan,
                                                HORIZONTAL_GAZE_FULL_DEG,HORIZONTAL_GAZE_NEUTRAL_DEG);
     // Project pitch relative to upright directly. Using |Y| prevents rolling
     // left/right through a side-on pose from inventing a vertical 180° turn.
@@ -411,6 +449,7 @@ class WorldFollower {
       sy = fmaxf(-5, fminf(5, pitchRate)) * SWING_GAZE*confidence*confidence*(3-2*confidence);
     }
     float sk = 1 - expf(-dt / .065f);
+    if(originPending) sx=0; // Keep the face centered while its wake pose settles.
     swingX += (fmaxf(-.6f, fminf(.6f, sx)) - swingX) * horizontalK;
     swingY += (fmaxf(-.6f, fminf(.6f, sy)) - swingY) * sk;
   }
@@ -423,6 +462,10 @@ class WorldFollower {
     float magnitude = fmaxf(0,fabsf(radians)-dead);
     return copysignf(fminf(1,magnitude/fmaxf(.01f,fullDegrees*.017453293f-dead)),radians);
   }
+  bool wakeRelative=false,originPending=false,originCandidate=false;
+  float wakeCenter=0,originUp[3]={};
+  uint32_t originSince=0;
+  uint8_t originSamples=0;
   MotionHeading heading;
   float up[3] = {0,0,-1}, neutralPitch = 0, turned = 0;
   float tableCenter = 0, hangingCenter = 0;

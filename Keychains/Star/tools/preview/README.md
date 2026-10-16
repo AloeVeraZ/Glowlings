@@ -74,6 +74,22 @@ Supply regressions include repeated replug after cell relaxation, a stale high g
 
 ## Liquid reservoir, unplug finish and always-on
 
-`always_on_test.cpp` tests tap/hold recognition, repeated toggles, normal double taps, long single holds, drags, lost contact, timer wrap, an hour with inactivity sleep disabled, automatic sleep after switching off, and critical shutdown priority. It also checks mode indicator cleanup and the charge finish scheduler: active drops only decrease after unplug and all finish before the color fades. Battery regressions verify the new reservoir palette, capacity persistence and immediate live-readout color changes; near-closed blink checks remain exact.
+`always_on_test.cpp` tests tap/hold recognition, repeated toggles, normal double taps, long single holds, drags, lost contact, timer wrap, an hour with inactivity sleep disabled, automatic sleep after switching off, and critical shutdown priority. It also checks pupil-only mode marks, exact closed-lid cleanup and no interference with heart/spiral pupils and the charge finish scheduler: active drops only decrease after unplug and all finish before the color fades. Battery regressions verify the new reservoir palette, capacity persistence and immediate live-readout color changes; near-closed blink checks remain exact.
 
 `animation_catalog.cpp OUTPUT` emits five sheets of real firmware frames. Build it like `preview.cpp`, create OUTPUT first, then run `python catalog.py OUTPUT GIF_DIR`. The exporter labels all scenes, optimizes the GIFs and verifies decoded sample frames. The fifth sheet includes optional nap-only peeks and the manually callable squeeze blink, which are labeled as available variants in `../../ANIMATIONS.md`.
+
+## Wake-relative horizontal center
+
+`wake_origin_test.cpp` exercises the production `WorldFollower::beginWakeSession`
+path. A stable gravity window (at least 150 ms and three readings) establishes
+neutral; noisy, moving, shaking or invalid samples cannot finish capture. The
+640-case matrix covers resting angles, both gravity polarities, flat/hanging
+poses, all four configured XY mounting rotations, 10–100 ms reads and timer wrap.
+Additional cases check a second wake at another angle, holds, long sensor gaps,
+heading turns, and sideways/inverted resting origins. Existing orientation-loop,
+gaze-layout, motion/sleep, always-on and battery checks remain in the suite.
+
+Axis rotations are explicitly configured in these tests and in the board driver.
+Session zeroing compensates resting angle, not unknown hardware axis wiring or
+absolute compass heading. Physical behavior on a replacement board still needs
+validation with its driver and axis configuration.

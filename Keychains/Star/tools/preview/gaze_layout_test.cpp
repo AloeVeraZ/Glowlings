@@ -45,7 +45,7 @@ int main(int argc,char **argv) {
   // Heading rotation has no accelerometer signature. A large turn must stay
   // at the edge while held, then retrace correctly when physically returned.
   for (bool hanging : {false,true}) for (int sign : {-1,1}) for (uint32_t period : {10u,25u,50u}) {
-    WorldFollower world; world.setFlatUpSign(1);
+    WorldFollower world; world.setFlatUpSign(1); world.beginWakeSession();
     uint32_t now=1;
     float a[3]={0,hanging?9.81f:0,hanging?0:9.81f},zero[3]={};
     auto hold=[&](uint32_t ms,const float g[3]) {
@@ -66,7 +66,7 @@ int main(int argc,char **argv) {
   // A tilt through the side-on position keeps looking the same way. Gyro and
   // acceleration agree throughout the excursion and its reverse path.
   for (bool hanging : {false,true}) for (int sign : {-1,1}) {
-    WorldFollower world; world.setFlatUpSign(1); uint32_t now=1;
+    WorldFollower world; world.setFlatUpSign(1); world.beginWakeSession(); uint32_t now=1;
     float zero[3]={},neutral[3]={0,hanging?9.81f:0,hanging?0:9.81f};
     for (;now<1001;now+=25) world.feed(neutral,zero,0,now);
     for (int leg=0;leg<2;++leg) for (int step=1;step<=240;++step) {

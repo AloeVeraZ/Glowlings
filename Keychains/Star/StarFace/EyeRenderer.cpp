@@ -301,6 +301,13 @@ void EyeRenderer::renderEye(const EyeFrame &e, const Box &clip, const Bubble *bu
   const float coreR = e.coreR;
   const float g1x = e.cx + e.glintX, g1y = e.cy + e.glintY, g1r = e.glintR;
   const float g2x = e.cx + e.glint2X, g2y = e.cy + e.glint2Y, g2r = e.glint2R;
+  // A small, static sparkle in the black pupil marks always-on. Reuse the
+  // pupil coordinates and clip to the actual lid aperture; no overlay pass.
+  const float awakeMark = (alwaysOn ? 1.0f : clamp01(modeCue)) * (1-heart) * (1-spiral) *
+                          smoothRange(.2f,.65f,aperture) * (1-smoothRange(0,.45f,batteryMorph));
+  const float sparkR = fmin2(4.0f*SCREEN_MIN_SIDE/240.0f,pr*.2f);
+  const float invSparkR = 1.0f/fmax2(.5f,sparkR);
+  const float sparkReach = sparkR+1.6f/fmax2(.05f,pScale);
   const uint16_t bodyPacked = eyeShade(.84f);
 
   for (int y = y0; y <= y1; ++y) {
@@ -415,6 +422,14 @@ void EyeRenderer::renderEye(const EyeFrame &e, const Box &clip, const Bubble *bu
         }
         aP *= 1.0f - aG;
         aC *= 1.0f - aG;
+      }
+      if (awakeMark > 0 && aP >= 1 && fabsf(sx) < sparkReach && fabsf(sy) < sparkReach) {
+        // Concave diamond sides make a gentle four-point glint. Its soft edge
+        // uses the existing eye shade ramp and stays entirely inside the iris.
+        float ax=fabsf(sx),ay=fabsf(sy);
+        float dSpark=(ax+ay+1.5f*ax*ay*invSparkR-sparkR)*.7071f*pScale;
+        float light=awakeMark*(.36f*cover(dSpark)+.045f*cover(dSpark-1.1f))*aEye;
+        if(light>0) { line[x]=eyeShade(light+rim);continue; }
       }
       if (aP <= 0 && aEye >= 1.0f) { line[x] = surfacePacked; continue; }
       if (aC >= 1.0f) { line[x] = PIXEL_BACKGROUND; continue; }
@@ -581,26 +596,6 @@ void EyeRenderer::renderBubble(const Bubble *stream, int count, int index, const
   }
 }
 
-// A tiny pair of open eyes marks always-on. The automatic-mode cue closes
-// them once and fades out; no text panel covers the face.
-void EyeRenderer::renderModeIndicator() {
-  const float scale=SCREEN_MIN_SIDE/240.0f,cx=SCREEN_CX,cy=SCREEN_CY+94*scale;
-  float alpha=alwaysOn?.65f:modeCue;
-  RGB color=rgbOf(eyeColor);
-  for(int y=int(cy-10*scale);y<=int(cy+10*scale);++y)
-    for(int x=int(cx-28*scale);x<=int(cx+28*scale);++x) {
-      float back=cover(roundRect(x-cx,y-cy,26*scale,9*scale,8*scale));
-      float d=FAR;
-      for(int side=-1;side<=1;side+=2) {
-        float dx=x-cx-side*8*scale,dy=y-cy;
-        float shape=alwaysOn?fabsf(fsqrt(dx*dx+dy*dy*1.4f)-5*scale)-1.2f*scale:
-                              fmax2(fabsf(dy-1.0f*scale+.035f*dx*dx)-.9f*scale,fabsf(dx)-5*scale);
-        d=fmin2(d,shape);
-      }
-      overlayPixel(fb,x,y,color,alpha*fmax2(.08f*back,cover(d)));
-    }
-}
-
 void EyeRenderer::compose(const EyeFrame sourceEyes[2]) {
   if (!fb) return;
   EyeFrame warped[2] = {sourceEyes[0], sourceEyes[1]};
@@ -647,9 +642,6 @@ void EyeRenderer::compose(const EyeFrame sourceEyes[2]) {
       Box p=bubbleBounds(bubbles[i][j]);grow(cur.x0,cur.y0,cur.x1,cur.y1,p.x0,p.y0,p.x1,p.y1);
     }
   }
-  if((alwaysOn || modeCue>0) && batteryMorph<=0)
-    grow(cur.x0,cur.y0,cur.x1,cur.y1,int(SCREEN_CX-29*scale),int(SCREEN_CY+83*scale),
-         int(SCREEN_CX+29*scale),int(SCREEN_CY+105*scale));
   if (batteryMorph > 0) {
     grow(cur.x0, cur.y0, cur.x1, cur.y1,
          int(SCREEN_CX-111*scale),int(SCREEN_CY-80*scale),
@@ -695,7 +687,6 @@ void EyeRenderer::compose(const EyeFrame sourceEyes[2]) {
       fb[y * SW + x] = pack565(r * (1 - barAlpha), g * (1 - barAlpha), b * (1 - barAlpha));
     }
   }
-  if ((alwaysOn || modeCue>0) && batteryMorph<=0) renderModeIndicator();
   if (barAlpha > 0) renderBattery(barAlpha);
   prev = cur;
   fullRedraw = false;

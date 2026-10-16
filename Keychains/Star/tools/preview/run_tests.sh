@@ -18,6 +18,9 @@ g++ -std=gnu++17 -O2 -Wall -I$SRC left_right_wake_test.cpp -o "$OUT/starface_lef
 "$OUT/starface_left_right_wake_test"
 g++ -std=gnu++17 -O2 -Wall -I$SRC motion_test.cpp -o "$OUT/starface_motion_test"
 "$OUT/starface_motion_test"
+g++ -std=gnu++17 -O2 -Wall -I$SRC wake_origin_test.cpp -o "$OUT/starface_wake_origin_test"
+"$OUT/starface_wake_origin_test"
+
 g++ -std=gnu++17 -O2 -Wall -I$SRC horizontal_tracking_test.cpp -o "$OUT/starface_horizontal_tracking_test"
 "$OUT/starface_horizontal_tracking_test"
 g++ -std=gnu++17 -O2 -Wall -I$SRC orientation_loop_test.cpp -o "$OUT/starface_orientation_loop_test"

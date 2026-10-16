@@ -41,7 +41,7 @@ Neutral, happy, sad, angry, focused, surprised, sleepy, squint, curious, confuse
 | 27 | Giggle | Repeated happy bounces and recovery blink |
 | 28 | Sneeze | Wind-up, open, squeeze and confused recovery |
 | 29 | Sassy | Raised lid, eye roll and wink |
-| 30 | Always-on enabled | Squeeze, pop open, alternating winks and open-eye indicator |
+| 30 | Always-on enabled | Squeeze, pop open, alternating winks and subtle pupil sparkles |
 | 31 | Automatic sleep restored | Settling blink and fading closed-eye cue |
 
 ## Blink and motion layers
@@ -63,3 +63,8 @@ While on the face, tap once, then press again within 420 ms and hold for at leas
 ## Recreate the GIF catalog
 
 Build `tools/preview/animation_catalog.cpp` against the same sources and stubs as `preview.cpp`, run it with an existing output directory, then run `catalog.py FRAMES OUTPUT`. Five labeled sheets cover expressions, all behavior states, motion/charging effects, and blink/nap variants. All images come from the actual firmware renderer. The GIF exporter checks decoded sample frames against its source frames.
+
+To refresh one sheet, pass a zero-based page index to the renderer and exporter:
+`animation_catalog FRAMES 2`, then `python catalog.py FRAMES GIF_DIR --page 2`.
+Page 2 contains the always-on pupil cues. Gaze effects in the catalog show the
+rendering response; sensor-origin capture is tested separately by `wake_origin_test`.
