@@ -61,7 +61,10 @@ class EyeRenderer {
                          uint32_t displayColor = UINT32_MAX);
   uint32_t getBatteryColor() const { return batteryCharging ? BATTERY_CHARGING_COLOR : batteryColor; }
   bool batteryDisplayActive() const { return batteryMorph > 0; }
-  void setFaceCharging(float amount, float phase) { faceCharge = amount; faceChargePhase = phase; }
+  void setFaceCharging(float amount, float phase, float stopPhase = -1) {
+    faceCharge = amount; faceChargePhase = phase; faceChargeStop = stopPhase;
+  }
+  void setAwakeMode(bool enabled, float cue) { alwaysOn = enabled; modeCue = cue; }
   void draw(const EyeFrame eyes[2]);
   // Draws into the framebuffer without pushing (host previews, screenshots).
   void compose(const EyeFrame eyes[2]);
@@ -79,7 +82,9 @@ class EyeRenderer {
   bool batteryCharging = false;
   uint32_t batteryColor = EYE_COLOR;
   float batteryChargePhase = 0;
-  float faceCharge = 0, faceChargePhase = 0;
+  float faceCharge = 0, faceChargePhase = 0, faceChargeStop = -1;
+  bool alwaysOn = false;
+  float modeCue = 0;
   bool opaqueBatteryCached = false, cachedCharging = false;
   int cachedPercent = -2;
   int cachedBatteryFrame = -1;
@@ -95,6 +100,7 @@ class EyeRenderer {
   void brighten(uint16_t &pixel, float alpha) const;
   void renderCheek(const EyeFrame &e, const Box &clip);
   void renderBattery(float opacity);
+  void renderModeIndicator();
   void buildEyeShades();
   uint16_t eyeShade(float alpha) const {
     int index = int(alpha * 255 + .5f);

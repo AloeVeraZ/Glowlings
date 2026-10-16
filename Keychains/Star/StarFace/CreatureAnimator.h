@@ -21,7 +21,7 @@ enum class Mood : uint8_t {
   SHIVER, LOVED, UPSIDE_DOWN,
   CURIOUS, YAWN, LOOK_AROUND,
   WINK, PLAYFUL, STRETCH,
-  PEEK, GIGGLE, SNEEZE, SASSY // original short performances while awake
+  PEEK, GIGGLE, SNEEZE, SASSY, ALWAYS_ON, AUTO_SLEEP // original short performances while awake
 };
 
 // The creature's behaviour on top of the eye system: it turns events into
@@ -49,6 +49,9 @@ class CreatureAnimator {
   }
   // fromShake plays a startled wake into dizziness; touched favors a startled wake.
   void startWake(uint32_t now, bool fromShake, bool touched = false);
+  void setAlwaysOn(bool enabled, uint32_t now);
+  bool alwaysOnEnabled() const { return alwaysOn; }
+  bool finishingCharge() const { return !battery.charging && clock/3.2f < chargeDrainUntil; }
   // napLevel > 0: fall asleep but keep the screen on at that backlight level.
   void startSleep(uint32_t now, float napLevel);
   bool sleepFinished(uint32_t now) const;
@@ -170,6 +173,8 @@ class CreatureAnimator {
   BatteryState battery;
   float batteryFatigue = 0, batterySadness = 0;
   float faceCharge = 0;
+  bool chargeWasOn = false, alwaysOn = false;
+  float chargeStopPhase = -1, chargeDrainUntil = 0;
   float colorR = float((EYE_COLOR >> 16) & 255), colorG = float((EYE_COLOR >> 8) & 255), colorB = float(EYE_COLOR & 255);
   float blLevel = 0;
 

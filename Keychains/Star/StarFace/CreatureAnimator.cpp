@@ -1,4 +1,5 @@
 #include "CreatureAnimator.h"
+#include "ChargeFlow.h"
 
 using namespace anim;
 
@@ -108,12 +109,19 @@ void CreatureAnimator::begin(Eyes *e, uint32_t unitSeed, uint32_t now) {
   environment = EnvironmentObserver(); reactedToEnvironment = false;
 }
 
+void CreatureAnimator::setAlwaysOn(bool enabled,uint32_t now) {
+  alwaysOn=enabled;
+  queued=Mood::IDLE; pointerHeld=false; holdAnnoy=0;
+  enterMood(enabled?Mood::ALWAYS_ON:Mood::AUTO_SLEEP,now,1800);
+}
+
 bool CreatureAnimator::activeAt(uint32_t now) const {
   return current != Mood::IDLE && (current == Mood::SLEEPY || int32_t(now - moodUntil) < 0);
 }
 
 bool CreatureAnimator::react(Mood m, uint32_t now, uint32_t durationMs, bool direct) {
   if (touchAngerPauseActive(now) || batteryDisplayActive(now)) return false;
+  if(!direct && activeAt(now) && (current==Mood::ALWAYS_ON || current==Mood::AUTO_SLEEP)) return false;
   if (activeAt(now) && current == Mood::DIZZY) {
     if (m != Mood::DIZZY) return false; // the shake reaction always plays through
     if (age < 1600) return true;  // still spinning; impact() already added the jolt
@@ -335,7 +343,14 @@ void CreatureAnimator::update(float dt, uint32_t now) {
   // Battery mood is a persistent layer; event choreography still plays as authored.
   batteryFatigue = approach(batteryFatigue, battery.fatigue(), 1.2f, dt);
   batterySadness = approach(batterySadness, battery.sadness(), 1.2f, dt);
-  uint32_t c = battery.color();
+  float phase=clock/3.2f;
+  if(chargeWasOn && !battery.charging) {
+    chargeStopPhase=(clock-dt)/3.2f;
+    chargeDrainUntil=faceCharge>.01f?ChargeFlow::finishPhase(chargeStopPhase):phase;
+  }
+  chargeWasOn=battery.charging;
+  bool visualCharge=battery.charging || finishingCharge();
+  uint32_t c = visualCharge ? BATTERY_CHARGING_COLOR : battery.color();
   float colorSpeed = battery.charging ? 4.0f : 3.0f;
   colorR = approach(colorR, float((c >> 16) & 255), colorSpeed, dt);
   colorG = approach(colorG, float((c >> 8) & 255), colorSpeed, dt);
@@ -353,9 +368,12 @@ void CreatureAnimator::update(float dt, uint32_t now) {
   float chargePhase = current == Mood::BATTERY ? (uint32_t(age) % 1400) / 1400.0f : 0;
   // The readout reports the live state immediately; the eyes keep their soft color fade.
   eyes->setBatteryDisplay(batteryDisplayPercent, morph, swirl, battery.charging, chargePhase, battery.color());
-  faceCharge = approach(faceCharge, battery.charging ? 1.0f : 0.0f, battery.charging ? 5.0f : 3.0f, dt);
+  faceCharge = approach(faceCharge, visualCharge ? 1.0f : 0.0f, visualCharge ? 5.0f : 3.0f, dt);
   float closingFade = current == Mood::SLEEPY ? 1.0f - smoothstep(0.0f, float(SLEEP_SEQUENCE_MS), float(age)) : 1.0f;
-  eyes->setFaceCharging(battery.charging ? faceCharge * closingFade * (1.0f - morph) : 0, clock / 3.2f);
+  eyes->setFaceCharging(visualCharge ? faceCharge * closingFade * (1.0f - morph) : 0, phase,
+                        battery.charging ? -1 : chargeStopPhase);
+  float cue=(current==Mood::ALWAYS_ON || current==Mood::AUTO_SLEEP)?1-smoothstep(900,1700,float(age)):0;
+  eyes->setAwakeMode(alwaysOn && current!=Mood::SLEEPY, cue*closingFade);
   updateGaze(now);
   updateBody();
   updateEffects(dt);
@@ -574,6 +592,19 @@ void CreatureAnimator::updateFace(float dt, uint32_t now) {
       if (crossed(1120)) eyes->wink(1-raised);
       break;
     }
+    case Mood::ALWAYS_ON:
+      scripted=true;blinkOK=false;speed=2;openSpeed=2;
+      if(age<160) { e=SQUINT;open[0]=open[1]=.35f; }
+      else if(age<600) { e=SURPRISED;k=.5f;open[0]=open[1]=1.12f; }
+      else { e=NEUTRAL;b=HAPPY;t=.20f; }
+      if(crossed(620)) eyes->wink(0);
+      if(crossed(1020)) eyes->wink(1);
+      break;
+    case Mood::AUTO_SLEEP:
+      scripted=true;blinkOK=false;speed=1.5f;openSpeed=1.5f;
+      e=NEUTRAL;b=SLEEPY;t=age<700?.35f:0;
+      open[0]=open[1]=age<240?1:age<600?.08f:1;
+      break;
     case Mood::UPSIDE_DOWN:
       // Worried at first, then cross, then furious (it trembles in updateEffects).
       e = WORRIED; b = ANGRY; t = holdAnnoy; k = 1;
@@ -751,6 +782,7 @@ void CreatureAnimator::updateGaze(uint32_t now) {
       break;
     }
     case Mood::WAKE_UP: case Mood::SLEEPY: own = true; gx = scriptGX; gy = scriptGY; speed = scriptGazeSpeed; break;
+    case Mood::ALWAYS_ON: case Mood::AUTO_SLEEP: own=true;gx=gy=0;speed=1.8f;break;
     case Mood::BATTERY: own = true; gx = gy = 0; speed = .9f; break;
     case Mood::CONFUSED: own = true; gx = .35f; gy = -.4f; speed = .8f; break;
     case Mood::CURIOUS: own = true; gx = .6f * lookSide; gy = -.18f; speed = .9f; break;
@@ -787,7 +819,8 @@ void CreatureAnimator::updateGaze(uint32_t now) {
   // A new turn redirects spontaneous looks; touch and scripted wake/sleep,
   // battery and dizzy sequences retain their authored gaze choreography.
   bool motionResponsive = current != Mood::SLEEPY && current != Mood::WAKE_UP &&
-                          current != Mood::BATTERY && current != Mood::DIZZY;
+                          current != Mood::BATTERY && current != Mood::DIZZY &&
+                          current != Mood::ALWAYS_ON && current != Mood::AUTO_SLEEP;
   if (motionResponsive && !touchAngerProtected && !usePointer &&
       (fabsf(tiltX) + fabsf(tiltY) > .40f || motionLevel > .12f)) {
     gx = tiltX; gy = tiltY;

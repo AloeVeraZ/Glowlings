@@ -1,5 +1,6 @@
 #pragma once
 #include "CreatureAnimator.h"
+#include "TouchTracker.h"
 
 inline Mood tapMood(unsigned streak) {
   return streak >= 3 ? Mood::ANGRY : streak == 2 ? Mood::SURPRISED : Mood::BOOP;
@@ -28,7 +29,7 @@ inline uint32_t sleepAnimationDelay(uint32_t timeout) {
 struct AwakeLimit {
   uint32_t startedAt = 0;
   uint32_t timeout = WAKE_AWAKE_MS;
-  bool active = false;
+  bool active = false, alwaysOn = false;
   void start(uint32_t now) { startedAt = now; timeout = WAKE_AWAKE_MS; active = true; }
   void interaction(uint32_t now, bool confirmedTouch = true) {
     if (active && confirmedTouch) {
@@ -38,9 +39,46 @@ struct AwakeLimit {
   }
   void finish() { active = false; }
   bool closingDue(uint32_t now) const {
-    return active && now - startedAt >= sleepAnimationDelay(timeout);
+    return active && !alwaysOn && now - startedAt >= sleepAnimationDelay(timeout);
   }
   uint32_t closingAt() const { return startedAt + sleepAnimationDelay(timeout); }
+};
+
+// Tap, then hold the second press. Presence must stay confirmed by TouchTracker;
+// single holds, ordinary double taps, drags and missing contact never toggle.
+struct AlwaysOnGesture {
+  static constexpr uint32_t GAP_MS=420, HOLD_MS=850;
+  bool haveTap=false, candidate=false, latched=false;
+  uint32_t tapAt=0,pressAt=0;
+  int tapX=0,tapY=0,pressX=0,pressY=0;
+  bool reserved() const { return candidate || latched; }
+  bool feed(const TouchTracker::Result &r,uint32_t now,bool allowed=true) {
+    bool consumed=reserved();
+    if(!allowed) { haveTap=candidate=latched=false; return false; }
+    if(r.kind==TouchTracker::PRESS) {
+      int dx=r.x-tapX,dy=r.y-tapY;
+      candidate=haveTap && now-tapAt<=GAP_MS && dx*dx+dy*dy<=30*30;
+      latched=false; haveTap=false; pressAt=now;pressX=r.x;pressY=r.y;
+      return candidate;
+    }
+    if(r.kind==TouchTracker::MOVE && candidate) {
+      int dx=r.x-pressX,dy=r.y-pressY;
+      if(dx*dx+dy*dy>20*20) candidate=false;
+    }
+    if(r.kind==TouchTracker::TAP || r.kind==TouchTracker::RELEASE || r.kind==TouchTracker::SWIPE) {
+      bool wasLatched=latched;
+      candidate=latched=false;
+      haveTap=r.kind==TouchTracker::TAP && !wasLatched;
+      if(haveTap) {tapAt=now;tapX=r.x;tapY=r.y;}
+      return wasLatched;
+    }
+    return consumed || reserved();
+  }
+  bool poll(bool tracking,uint32_t now) {
+    if(!tracking) {candidate=latched=false;return false;}
+    if(!candidate || latched || now-pressAt<HOLD_MS) return false;
+    candidate=false;latched=true;haveTap=false;return true;
+  }
 };
 
 inline bool confirmedTouchReport(uint8_t points, uint8_t event, uint8_t gesture,

@@ -156,6 +156,10 @@ class BatterySupply {
     sampled = true;
     sampledAt = now;
     float previousMeasured = measuredVolts;
+    // Two preceding observations protect the edge detector from a single low
+    // ADC outlier. The percentage filter is deliberately much slower than USB.
+    float stepBaseline = previousMeasured > olderMeasured ? previousMeasured : olderMeasured;
+    olderMeasured = previousMeasured;
     measuredVolts = rawVolts; rawPercent = BatteryState::estimate(rawVolts);
     if (!initialized) {
       volts = filteredVolts = rawVolts; percent = rawPercent;
@@ -202,8 +206,21 @@ class BatterySupply {
     // Also recognize a small abrupt plug-in step outside the transition window.
     // Require three observations on the elevated plateau; a spike cannot pass,
     // and gradual changes retain the existing slower trend confirmation.
-    bool quickRise = rawVolts - volts >= CHARGE_TREND_VOLTS &&
-                     (fastRiseVotes || rawVolts - previousMeasured >= CHARGE_TREND_VOLTS);
+    // Latch the recent low plateau, independently of the slowly changing gauge
+    // baseline. After unplugging, the cell can relax below that old baseline;
+    // reconnecting to the very same voltage still needs to count as a new rise.
+    bool quickRise = fastRiseVotes && rawVolts - riseBaseline >= CHARGE_TREND_VOLTS;
+    if (!quickRise && validVoltage(stepBaseline) && rawVolts - stepBaseline >= CHARGE_TREND_VOLTS) {
+      riseBaseline = stepBaseline;
+      quickRise = true;
+    }
+    // A high outlier immediately before the real edge can hide its first
+    // step from the two-sample guard. A sustained plateau above the gauge's
+    // known baseline can still start confirmation on the following poll.
+    if (!quickRise && rawVolts - volts >= CHARGE_TREND_VOLTS && rawVolts >= previousMeasured) {
+      riseBaseline = volts;
+      quickRise = true;
+    }
     fastRiseVotes = quickRise ? (fastRiseVotes < 3 ? fastRiseVotes + 1 : 3) : 0;
     bool rise = rawVolts - volts >= riseThreshold ||
                 fastRiseVotes >= 2 ||
@@ -217,8 +234,12 @@ class BatterySupply {
       return;
     }
     if (chargeSuspected()) return; // freeze the percentage before confirming the voltage jump
-    if (now - trendAt >= CHARGE_TREND_MS) {
-      trendAt = now; trendVolts = rawVolts;
+    // Do not erase a genuine slow rise every ten seconds. The measured charger
+    // can take a minute to add 25 mV, while the SOC baseline follows it upward.
+    // Flat/noisy traces rebase normally; the trend has a bounded two-minute age.
+    if (now - trendAt >= CHARGE_TREND_MS &&
+        (filteredVolts <= trendVolts + .001f || now - trendAt >= CHARGE_TREND_MAX_MS)) {
+      trendAt = now; trendVolts = filteredVolts;
     }
     if (now - estimatedAt >= BATTERY_CHECK_MS) {
       volts += (rawVolts - volts) * .4f;
@@ -232,7 +253,7 @@ class BatterySupply {
   uint32_t estimatedAt = 0;
   bool sampled = false, trackingTrend = false;
   uint32_t sampledAt = 0, trendAt = 0;
-  float trendVolts = 0;
+  float trendVolts = 0, olderMeasured = 0, riseBaseline = 0;
   uint8_t riseVotes = 0, fallVotes = 0, fastRiseVotes = 0;
   bool smoothing = false, sagging = false; // smoothVolts restarts whenever charging (re)starts
   float smoothVolts = 0;

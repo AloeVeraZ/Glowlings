@@ -1,6 +1,8 @@
 // Keep the per-pixel loop optimized for speed rather than code size.
 #pragma GCC optimize("O3")
 #include "EyeRenderer.h"
+#include "BatteryGlyphs.h"
+#include "ChargeFlow.h"
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -90,7 +92,7 @@ static inline float glowAt(float d) {
   if (!GLOW || d >= GLOW_PX) return 0;
   return glowLut[int(fmax2(0.0f, d) * (64.0f / GLOW_PX))];
 }
-static constexpr float BUBBLE_MERGE_PX = 7.0f;          // gooey neck where a charging bubble joins the eye
+static constexpr float BUBBLE_MERGE_PX = 5.5f;          // compact soft neck where a charging drop joins the eye
 static constexpr float BUBBLE_GLOW_PX = GLOW_PX / 3.0f; // bubbles draw glowAt(d * 3)
 
 static inline uint16_t pack565(float r, float g, float b) {
@@ -155,87 +157,82 @@ static float roundedSpan(float y,float hx,float hy,float r) {
   return hx-r+fsqrt(fmax2(0,r*r-corner*corner));
 }
 
-// The readout fills most of the round panel; its cap stays inside the edge.
-static constexpr float BATTERY_ICON_SCALE = 1.25f;
+// A luminous reservoir above a clear readout: the same soft body, bright rim
+// and rounded forms as the eyes. A surface wave changes shape, never capacity.
+static constexpr float BATTERY_ICON_SCALE = 1.1f;
 
 void EyeRenderer::renderBattery(float opacity) {
-  if (opacity <= 0) return;
-  const float scale = SCREEN_MIN_SIDE / 240.0f * BATTERY_ICON_SCALE * (.975f + .025f * opacity);
-  const float cx = SCREEN_CX - 2.5f * scale, cy = SCREEN_CY-10*scale;
-  const RGB color = rgbOf(getBatteryColor());
-  const int x0 = int(cx - 85 * scale), x1 = int(cx + 95 * scale);
-  const int y0 = int(cy - 40 * scale), y1 = int(cy + 40 * scale);
-  const float filledTo = cx - 77 * scale + 154 * scale * (batteryPercent < 0 ? 0 : batteryPercent / 100.0f);
+  if(opacity<=0) return;
+  const float scale=SCREEN_MIN_SIDE/240.0f*(.975f+.025f*opacity);
+  const float tankScale=scale*BATTERY_ICON_SCALE;
+  const float cx=SCREEN_CX-3*tankScale,cy=SCREEN_CY-27*scale;
+  const RGB color=rgbOf(getBatteryColor());
+  const float hx=88*tankScale,hy=42*tankScale,inX=hx-3*tankScale,inY=hy-3*tankScale;
+  int animation=int(batteryChargePhase*16);if(animation>15) animation=15;
+  const float phase=animation/16.0f,level=clamp01(batteryPercent/100.0f);
+  const float base=cy+inY-2*inY*level;
+  const float waveAmount=batteryCharging && level>0 && level<1?2.5f*tankScale:0;
+  float surface[SW];
+  for(int x=0;x<SW;++x)
+    surface[x]=base+waveAmount*(.72f*sinf(TAU*phase+(x-cx)*.037f)+.28f*sinf(TAU*phase*2-(x-cx)*.071f));
   uint16_t shades[256];
   for(int i=0;i<256;++i) {float a=i/255.0f;shades[i]=pack565(color.r*a,color.g*a,color.b*a);}
-  int animation=int(batteryChargePhase*16);if(animation>15) animation=15;
-  float phase=animation/16.0f;
-  for (int y = y0; y <= y1; ++y) {
-    float outerSpan=roundedSpan(y-cy,82*scale,37*scale,10*scale);
-    float innerSpan=roundedSpan(y-cy,77*scale,32*scale,6*scale);
-    for (int x = x0; x <= x1; ++x) {
-      float outer=cover(fabsf(x-cx)-outerSpan)*cover(fabsf(y-cy)-37*scale);
-      float inner=cover(fabsf(x-cx)-innerSpan)*cover(fabsf(y-cy)-32*scale);
-      float fill = batteryPercent >= 0 ? inner * cover(x - filledTo) : 0;
-      if (batteryPercent == 0) fill = 0;
-      float brightness = fmax2(0, outer - inner) + .12f * inner + .88f * fill;
-      if (batteryCharging) {
-        // A narrow highlight travels across the actual fill and empty track.
-        float sweepX = cx + (-95 + 190 * phase) * scale;
-        float sweep = clamp01(1 - fabsf(x - sweepX) / (16 * scale));
-        brightness = fmin2(1, brightness + .55f * inner * sweep * sweep);
-      }
-      if(outer>0) {
-        if(opacity*outer>=.999f) fb[y*SW+x]=shades[int(clamp01(brightness)*255+.5f)];
-        else overlayPixel(fb,x,y,{color.r*brightness,color.g*brightness,color.b*brightness},opacity*outer);
-      }
-      float cap = cover(roundRect(x - (cx + 86.5f * scale), y - cy, 4.5f * scale, 10 * scale, 3 * scale));
-      if (cap > 0) overlayPixel(fb, x, y, color, opacity * cap);
+  float breath=batteryCharging?.92f+.08f*cosf(TAU*phase):1;
+  const int x0=int(cx-hx-5),x1=int(cx+hx+5),y0=int(cy-hy-5),y1=int(cy+hy+5);
+  for(int y=y0;y<=y1;++y) {
+    float outerSpan=roundedSpan(fmin2(fabsf(y-cy),hy),hx,hy,25*tankScale);
+    float innerSpan=roundedSpan(y-cy,inX,inY,22*tankScale);
+    float bottomShade=.64f+.16f*clamp01((cy+inY-y)/(2*inY));
+    for(int x=x0;x<=x1;++x) {
+      if(x<0 || x>=SW || y<0 || y>=SH) continue;
+      float od=fmax2(fabsf(x-cx)-outerSpan,fabsf(y-cy)-hy);
+      float outer=cover(od),inner=cover(fabsf(x-cx)-innerSpan)*cover(fabsf(y-cy)-inY);
+      float liquid=batteryPercent>0?inner*(batteryPercent>=100?1:cover(surface[x]-y)):0;
+      float meniscus=liquid*clamp01(1-fabsf(y-surface[x])/(2*tankScale));
+      float brightness=breath*fmax2(0,outer-inner)+.045f*inner+bottomShade*liquid+.24f*meniscus;
+      if(od>0 && od<5) brightness=fmax2(brightness,.19f*(1-od/5)*(1-od/5));
+      if(brightness<=.002f) continue;
+      if(opacity>=.999f) fb[y*SW+x]=shades[int(clamp01(brightness)*255+.5f)];
+      else overlayPixel(fb,x,y,color,opacity*clamp01(brightness));
     }
   }
-
-  if (batteryCharging) {
-    // Pulsing lightning bolt below the bar, clear of the percentage text.
-    const float points[6][2] = {{1,-11},{-7,2},{-1,2},{-3,11},{7,-3},{1,-3}};
-    float pulse = .65f + .35f * (.5f - .5f * cosf(TAU * phase));
-    for (int y = int(cy + 48 * scale); y <= int(cy + 77 * scale); ++y)
-      for (int x = int(cx - 9 * scale); x <= int(cx + 9 * scale); ++x) {
-        float px = (x - cx) / scale, py = (y - cy) / scale - 62;
-        bool inside = false;
-        for (int i = 0, j = 5; i < 6; j = i++)
-          if ((points[i][1] > py) != (points[j][1] > py) &&
-              px < (points[j][0] - points[i][0]) * (py - points[i][1]) /
-                   (points[j][1] - points[i][1]) + points[i][0]) inside = !inside;
-        if (inside) overlayPixel(fb, x, y, color, opacity * pulse);
-      }
+  // Small drops rise through the volume and disappear into the meniscus.
+  if(batteryCharging && batteryPercent>0) for(int i=0;i<3;++i) {
+    float t=phase+i/3.0f;t-=floorf(t);
+    float bx=cx+(-.48f+i*.48f)*inX+3*tankScale*sinf(TAU*(phase+i*.23f));
+    float by=cy+inY-4*tankScale-t*fmax2(0,2*inY*level-7*tankScale);
+    float r=(1.5f+.4f*i)*tankScale*(1-smoothRange(.82f,1,t));
+    for(int y=int(by-r-1);y<=int(by+r+1);++y) for(int x=int(bx-r-1);x<=int(bx+r+1);++x) {
+      if(x<0 || x>=SW || y<0 || y>=SH || y<surface[x]) continue;
+      float d=fsqrt((x-bx)*(x-bx)+(y-by)*(y-by))-r;
+      float clip=cover(roundRect(x-cx,y-cy,inX,inY,22*tankScale));
+      overlayPixel(fb,x,y,color,opacity*.55f*cover(d)*clip);
+    }
   }
+  const float capX=cx+hx+5*tankScale;
+  for(int y=int(cy-11*tankScale);y<=int(cy+11*tankScale);++y)
+    for(int x=int(capX-3*tankScale);x<=int(capX+3*tankScale);++x)
+      overlayPixel(fb,x,y,color,opacity*.85f*cover(roundRect(x-capX,y-cy,2.5f*tankScale,10*tankScale,2*tankScale)));
 
-  // Small rounded vector cells form clear digits; exact 0..100 percentages fit.
-  static const uint8_t glyph[12][7] = {
-    {14,17,19,21,25,17,14}, {4,12,4,4,4,4,14}, {14,17,1,2,4,8,31},
-    {30,1,1,14,1,1,30}, {2,6,10,18,31,2,2}, {31,16,16,30,1,1,30},
-    {14,16,16,30,17,17,14}, {31,1,2,4,8,8,8}, {14,17,17,14,17,17,14},
-    {14,17,17,15,1,1,14}, {0,0,0,31,0,0,0}, {17,18,2,4,8,9,17}
-  };
+  // Heavier rounded figures sit below the reservoir, free of a UI badge.
   char label[6];
-  if (batteryPercent < 0) snprintf(label, sizeof(label), "--%%");
-  else snprintf(label, sizeof(label), "%d%%", batteryPercent);
-  const int chars = int(strlen(label));
-  const float cell = 4.5f * scale, width = (chars * 6 - 1) * cell, height = 7 * cell;
-  const float left = cx - width * .5f, top = cy - height * .5f;
-  // A translucent dark backing keeps white text readable across the fill edge.
-  for (int y = int(cy - 24 * scale); y <= int(cy + 24 * scale); ++y)
-    for (int x = int(cx - width * .5f - 6 * scale); x <= int(cx + width * .5f + 6 * scale); ++x)
-      overlayPixel(fb, x, y, {0,0,0}, .86f * opacity * cover(roundRect(x - cx, y - cy, width * .5f + 5 * scale, 23 * scale, 6 * scale)));
-  for (int ch = 0; ch < chars; ++ch) {
-    int index = label[ch] == '%' ? 11 : label[ch] == '-' ? 10 : label[ch] - '0';
-    for (int row = 0; row < 7; ++row) for (int col = 0; col < 5; ++col) {
-      if (!(glyph[index][row] & (1 << (4 - col)))) continue;
-      float px = left + (ch * 6 + col + .5f) * cell, py = top + (row + .5f) * cell;
-      for (int y = int(floorf(py - cell * .5f)); y <= int(ceilf(py + cell * .5f)); ++y)
-        for (int x = int(floorf(px - cell * .5f)); x <= int(ceilf(px + cell * .5f)); ++x)
-          overlayPixel(fb, x, y, {255,255,255}, opacity * cover(roundRect(x - px, y - py, cell * .5f, cell * .5f, .4f * scale)));
-    }
+  if(batteryPercent<0) snprintf(label,sizeof(label),"--");
+  else snprintf(label,sizeof(label),"%d",batteryPercent);
+  int chars=int(strlen(label));
+  const float textScale=1.5f*scale,smallScale=textScale*.72f;
+  const float width=(chars*28-2)*textScale+7*scale+26*smallScale;
+  const float left=SCREEN_CX-width*.5f,top=SCREEN_CY+28*scale;
+  RGB ink={color.r*.28f+255*.72f,color.g*.28f+255*.72f,color.b*.28f+255*.72f};
+  for(int ch=0;ch<=chars;++ch) {
+    int index=ch==chars?11:label[ch]=='-'?10:label[ch]-'0';
+    float sc=ch==chars?smallScale:textScale,inv=1/sc;
+    float origin=ch==chars?left+(chars*28-2)*textScale+7*scale:left+ch*28*textScale;
+    float ty=top+(35*textScale-35*sc);
+    for(int y=int(ty);y<=int(ceilf(ty+39*sc));++y)
+      for(int x=int(origin);x<=int(ceilf(origin+25*sc));++x) {
+        float a=BatteryGlyphs::sample(index,(x-origin)*inv,(y-ty)*inv);
+        overlayPixel(fb,x,y,ink,opacity*a);
+      }
   }
 }
 
@@ -244,6 +241,7 @@ void EyeRenderer::begin(uint16_t *framebuffer, PushWindowFn pushFn) {
   push = pushFn;
   fullRedraw = true;
   buildGlow();
+  BatteryGlyphs::build();
   buildEyeShades();
 }
 
@@ -266,7 +264,11 @@ void EyeRenderer::renderEye(const EyeFrame &e, const Box &clip, const Bubble *bu
   static constexpr RGB PUP = rgbOf(PUPIL_COLOR);
   const float rx = e.rx, ry = e.ry;
   const float aperture = (fmin2(e.botA,ry)-fmax2(e.topA,-ry))/(ry*1.3f);
-  const float glowGain = 1-.09f*faceCharge*smoothRange(.08f,.72f,aperture)*(.5f+.5f*sinf(faceChargePhase*TAU));
+  const float glowGain = 1-.09f*faceCharge*smoothRange(.18f,.72f,aperture)*(.5f+.5f*sinf(faceChargePhase*TAU));
+  // The joining neck shrinks with the drop. A fixed wide blend left tiny
+  // teeth along nearly closed lids after the drop itself had faded away.
+  const float bubbleMerge = bubble ? fmin2(BUBBLE_MERGE_PX*SCREEN_MIN_SIDE/240.0f,2*bubble->radius) : 1;
+  const float invBubbleMerge = 1/bubbleMerge;
   const float iax = 1.0f / rx, iay = 1.0f / ry, iax2 = iax * iax, iay2 = iay * iay;
   // Near the oval's edge the distance is computed exactly; well inside or
   // outside it is not needed.
@@ -348,8 +350,7 @@ void EyeRenderer::renderEye(const EyeFrame &e, const Box &clip, const Bubble *bu
       if (bubble) {
         float bx=x-bubble->x,by=y-bubble->y;
         float bubbleDistance=fsqrt(bx*bx+by*by)-bubble->radius;
-        float merge=BUBBLE_MERGE_PX*SCREEN_MIN_SIDE/240.0f;
-        d=-smax(-d,-bubbleDistance,merge,1/merge);
+        d=-smax(-d,-bubbleDistance,bubbleMerge,invBubbleMerge);
       }
       if (d >= .5f) {
         // Outside: the glow. (Brighter wins, so the two eyes' glows and an
@@ -470,12 +471,6 @@ static inline void grow(int &x0, int &y0, int &x1, int &y1, int bx0, int by0, in
   x1 = bx1 > x1 ? bx1 : x1; y1 = by1 > y1 ? by1 : y1;
 }
 
-// Repeatable 0..1 noise: each bubble gets new size, speed and sway every trip.
-static inline float bubbleNoise(uint32_t n) {
-  n ^= n >> 16; n *= 0x7feb352du; n ^= n >> 15; n *= 0x846ca68bu; n ^= n >> 16;
-  return (n & 0xFFFFFF) * (1.0f / 16777216.0f);
-}
-
 // Bubbles leave the USB-C port at the bottom edge, wander up on their own
 // paths and pour into a point along the eye's lower edge. While far from the
 // eye they are plain circles; only the last stretch pays for the full
@@ -483,22 +478,23 @@ static inline float bubbleNoise(uint32_t n) {
 int EyeRenderer::chargingBubbles(const EyeFrame &e,Bubble bubbles[CHARGE_BUBBLES]) const {
   if(faceCharge<=.001f || e.ry<1 || e.rx<1) return 0;
   float aperture=(fmin2(e.botA,e.ry)-fmax2(e.topA,-e.ry))/(1.3f*e.ry);
-  float amount=faceCharge*smoothRange(.08f,.72f,aperture);
+  float amount=faceCharge*smoothRange(.18f,.72f,aperture);
   if(amount<=.001f) return 0;
   const float scale=SCREEN_MIN_SIDE/240.0f,side=e.rightEye?1.0f:-1.0f,mirror=e.rightEye?-1.0f:1.0f;
   const float cs=cosf(e.tilt),sn=sinf(e.tilt),bendK=e.bend/(e.rx*e.rx);
   const float portX=SCREEN_CX,portY=SCREEN_CY+SCREEN_RADIUS-8*scale;
   int count=0;
   for(int i=0;i<CHARGE_BUBBLES;++i) {
-    uint32_t seed=uint32_t(i*977+(e.rightEye?131071:0));
-    float speed=.8f+.45f*bubbleNoise(seed);
+    if(!ChargeFlow::launchedBefore(faceChargePhase,faceChargeStop,i,e.rightEye)) continue;
+    uint32_t seed=ChargeFlow::seed(i,e.rightEye);
+    float speed=ChargeFlow::speed(i,e.rightEye);
     float trip=faceChargePhase*speed+float(i)/CHARGE_BUBBLES+(e.rightEye?.5f/CHARGE_BUBBLES:0);
     float cycle=floorf(trip),t=trip-cycle;
     uint32_t key=seed*2654435761u+uint32_t(int32_t(cycle))*40503u;
-    float size=.65f+.7f*bubbleNoise(key),across=bubbleNoise(key+1)*2-1;
-    float sway=(3+6*bubbleNoise(key+2))*scale,swayTurns=1.2f+1.3f*bubbleNoise(key+3);
-    float launch=(1.5f+5*bubbleNoise(key+4))*scale;
-    float endR=(3.0f+3.2f*size)*scale;
+    float size=.65f+.7f*ChargeFlow::noise(key),across=ChargeFlow::noise(key+1)*2-1;
+    float sway=(3+6*ChargeFlow::noise(key+2))*scale,swayTurns=1.2f+1.3f*ChargeFlow::noise(key+3);
+    float launch=(1.5f+5*ChargeFlow::noise(key+4))*scale;
+    float endR=(2.8f+2.6f*size)*scale;
     // Where along the lower edge this bubble lands, in the eye's own frame.
     float xi=across*.55f*e.rx,edge=e.ry*fsqrt(fmax2(0,1-xi*xi/(e.rx*e.rx)));
     float lid=e.botA+e.botB*xi+e.botC*xi*xi;
@@ -511,8 +507,8 @@ int EyeRenderer::chargingBubbles(const EyeFrame &e,Bubble bubbles[CHARGE_BUBBLES
     float bendX=startX+(targetX-startX)*.35f+side*14*scale,bendY=targetY+38*scale;
     float x=u*u*startX+2*u*t*bendX+t*t*targetX;
     float y=u*u*portY+2*u*t*bendY+t*t*targetY;
-    x+=sway*sinf(TAU*(swayTurns*t+bubbleNoise(key+5)))*sinf(3.14159265f*t);
-    float radius=(1.2f*scale+(endR-1.2f*scale)*t*fsqrt(t))*amount*smoothRange(0,.08f,t);
+    x+=sway*sinf(TAU*(swayTurns*t+ChargeFlow::noise(key+5)))*sinf(3.14159265f*t);
+    float radius=(1.2f*scale+(endR-1.2f*scale)*t*fsqrt(t))*amount*smoothRange(0,.08f,t)*(1-smoothRange(.88f,1,t));
     if(radius<=.25f) continue;
     x=targetX+(x-targetX)*amount;y=targetY+(y-targetY)*amount;
     float ex=x-edgeX,ey=y-edgeY;
@@ -585,6 +581,26 @@ void EyeRenderer::renderBubble(const Bubble *stream, int count, int index, const
   }
 }
 
+// A tiny pair of open eyes marks always-on. The automatic-mode cue closes
+// them once and fades out; no text panel covers the face.
+void EyeRenderer::renderModeIndicator() {
+  const float scale=SCREEN_MIN_SIDE/240.0f,cx=SCREEN_CX,cy=SCREEN_CY+94*scale;
+  float alpha=alwaysOn?.65f:modeCue;
+  RGB color=rgbOf(eyeColor);
+  for(int y=int(cy-10*scale);y<=int(cy+10*scale);++y)
+    for(int x=int(cx-28*scale);x<=int(cx+28*scale);++x) {
+      float back=cover(roundRect(x-cx,y-cy,26*scale,9*scale,8*scale));
+      float d=FAR;
+      for(int side=-1;side<=1;side+=2) {
+        float dx=x-cx-side*8*scale,dy=y-cy;
+        float shape=alwaysOn?fabsf(fsqrt(dx*dx+dy*dy*1.4f)-5*scale)-1.2f*scale:
+                              fmax2(fabsf(dy-1.0f*scale+.035f*dx*dx)-.9f*scale,fabsf(dx)-5*scale);
+        d=fmin2(d,shape);
+      }
+      overlayPixel(fb,x,y,color,alpha*fmax2(.08f*back,cover(d)));
+    }
+}
+
 void EyeRenderer::compose(const EyeFrame sourceEyes[2]) {
   if (!fb) return;
   EyeFrame warped[2] = {sourceEyes[0], sourceEyes[1]};
@@ -631,11 +647,13 @@ void EyeRenderer::compose(const EyeFrame sourceEyes[2]) {
       Box p=bubbleBounds(bubbles[i][j]);grow(cur.x0,cur.y0,cur.x1,cur.y1,p.x0,p.y0,p.x1,p.y1);
     }
   }
+  if((alwaysOn || modeCue>0) && batteryMorph<=0)
+    grow(cur.x0,cur.y0,cur.x1,cur.y1,int(SCREEN_CX-29*scale),int(SCREEN_CY+83*scale),
+         int(SCREEN_CX+29*scale),int(SCREEN_CY+105*scale));
   if (batteryMorph > 0) {
-    const float icon = scale * BATTERY_ICON_SCALE; // renderBattery's geometry, plus a pixel
     grow(cur.x0, cur.y0, cur.x1, cur.y1,
-         int(SCREEN_CX - 89 * icon), int(SCREEN_CY - 52 * icon),
-         int(SCREEN_CX + 94 * icon), int(SCREEN_CY + (batteryCharging ? 69 : 32) * icon));
+         int(SCREEN_CX-111*scale),int(SCREEN_CY-80*scale),
+         int(SCREEN_CX+111*scale),int(SCREEN_CY+91*scale));
   }
   cur.x0 = cur.x0 < 0 ? 0 : cur.x0;
   cur.y0 = cur.y0 < 0 ? 0 : cur.y0;
@@ -677,6 +695,7 @@ void EyeRenderer::compose(const EyeFrame sourceEyes[2]) {
       fb[y * SW + x] = pack565(r * (1 - barAlpha), g * (1 - barAlpha), b * (1 - barAlpha));
     }
   }
+  if ((alwaysOn || modeCue>0) && batteryMorph<=0) renderModeIndicator();
   if (barAlpha > 0) renderBattery(barAlpha);
   prev = cur;
   fullRedraw = false;
