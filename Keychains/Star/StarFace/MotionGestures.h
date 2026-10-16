@@ -281,13 +281,15 @@ class WorldFollower {
   bool spun = false, weightless = false;
   bool uprightReferenceActive() const { return wearPose; }
   // Explicitly start a new awake interval. Touch renewals and brief sensor
-  // gaps must not move this origin after it has been captured.
+  // gaps do not move the origin; a periodic steady-pose refresh can ease it.
   void beginWakeSession() {
     wakeRelative=true; originPending=true; originCandidate=false;
     seeded=false; lastAt=0; heading.reset(); tiltX=swingX=0;
+    panCenter=0; recenterSteady=recentering=false; recenterCount=0;
   }
   bool horizontalOriginReady() const { return wakeRelative && !originPending; }
   float horizontalOriginDegrees() const { return wakeCenter / .017453293f; }
+  uint32_t horizontalRecenterCount() const { return recenterCount; }
 
   // Caller supplies enclosure trim; generic screen-frame fixtures use zero.
   void setHorizontalCenter(float tableDegrees, float hangingDegrees) {
@@ -300,7 +302,7 @@ class WorldFollower {
   }
 
   void feed(const float a[3], const float g[3], float shakeStrength, uint32_t now,
-            const float headingGyro[3] = nullptr) {
+            const float headingGyro[3] = nullptr, bool allowRecenter = true) {
     const float dt = lastAt ? fminf(.1f, (now - lastAt) * .001f) : .025f;
     if (lastAt && now - lastAt > 250) {
       seeded = false;
@@ -309,6 +311,7 @@ class WorldFollower {
       // beginWakeSession(); legacy callers still reset after a long gap.
       if (now-lastAt > 2000 && !wakeRelative) heading.reset();
       if (originPending) originCandidate=false;
+      recenterSteady=recentering=false;
     }
     lastAt = now;
     spun = weightless = false;
@@ -326,6 +329,7 @@ class WorldFollower {
     if (fabsf(turned) > SPIN_TURNS_FOR_DIZZY * 6.2831853f) { turned = 0; spun = true; }
 
     bool reliable = n > 7.5f && n < 12.0f;
+    if(!reliable) recenterSteady=recentering=false;
     if (!seeded) {
       if (!reliable) return;
       for (int i = 0; i < 3; ++i) up[i] = a[i] / n;
@@ -402,19 +406,19 @@ class WorldFollower {
           if(originSamples<255)++originSamples;
           if(now-originSince>=150 && originSamples>=3) {
             wakeCenter=horizontalAngle; originPending=false;
-            heading.reset();pan=0;tiltX=swingX=0;
+            heading.reset();pan=panCenter=0;tiltX=swingX=0;
+            recenteredAt=now;recenterSteady=recentering=false;
           }
         }
       }
     }
+    if(horizontalOriginReady())
+      refreshHorizontalOrigin(a,n,headingGyro ? headingGyro : g,shakeStrength,now,horizontalAngle,pan,allowRecenter);
     float horizontalCenter = wakeRelative ? wakeCenter : (wearPose ? hangingCenter : tableCenter);
     float relativeAngle=horizontalAngle-horizontalCenter;
-    if(wakeRelative) {
-      // Cross the atan2 seam by the short path instead of a full-screen jump.
-      if(relativeAngle>3.14159265f)relativeAngle-=6.28318531f;
-      if(relativeAngle<-3.14159265f)relativeAngle+=6.28318531f;
-    }
-    float gx = originPending ? 0 : HORIZONTAL_GAZE_SIGN*gentleAngle(relativeAngle+pan,
+    if(wakeRelative) relativeAngle=wrapAngle(relativeAngle);
+    float relativePan=wakeRelative ? wrapAngle(pan-panCenter) : pan;
+    float gx = originPending ? 0 : HORIZONTAL_GAZE_SIGN*gentleAngle(relativeAngle+relativePan,
                                                HORIZONTAL_GAZE_FULL_DEG,HORIZONTAL_GAZE_NEUTRAL_DEG);
     // Project pitch relative to upright directly. Using |Y| prevents rolling
     // left/right through a side-on pose from inventing a vertical 180° turn.
@@ -454,6 +458,38 @@ class WorldFollower {
     swingY += (fmaxf(-.6f, fminf(.6f, sy)) - swingY) * sk;
   }
  private:
+  static float wrapAngle(float a) {
+    if(a>3.14159265f)a-=6.28318531f;
+    if(a<-3.14159265f)a+=6.28318531f;
+    return a;
+  }
+  void refreshHorizontalOrigin(const float a[3],float n,const float g[3],float shake,
+                               uint32_t now,float angle,float pan,bool allowed) {
+    bool quiet=allowed && n>8.8f && n<10.8f && shake<1 && motion::len3(g)<HORIZONTAL_RECENTER_GYRO_RAD_S;
+    float unit[3]={};
+    if(quiet)for(int i=0;i<3;++i)unit[i]=a[i]/n;
+    float dot=unit[0]*recenterUp[0]+unit[1]*recenterUp[1]+unit[2]*recenterUp[2];
+    if(!quiet) {recenterSteady=recentering=false;return;}
+    if(!recenterSteady || dot<.99985f) {
+      for(int i=0;i<3;++i)recenterUp[i]=unit[i];
+      recenterSince=now;recenterSteady=true;recentering=false;
+      return;
+    }
+    if(!recentering && now-recenteredAt>=HORIZONTAL_RECENTER_INTERVAL_MS &&
+       now-recenterSince>=HORIZONTAL_RECENTER_STILL_MS) {
+      recenterFrom=wakeCenter;recenterPanFrom=panCenter;
+      recenterTarget=angle;recenterPanTarget=pan;
+      recenterAt=recenteredAt=now;recentering=true;
+    }
+    if(!recentering)return;
+    float t=fminf(1,(now-recenterAt)/float(HORIZONTAL_RECENTER_BLEND_MS));
+    float blend=t*t*(3-2*t);
+    // Move only the reference. Do not reset the heading integrator or eye
+    // springs: visible gaze eases smoothly and deliberate motion cancels it.
+    wakeCenter=wrapAngle(recenterFrom+wrapAngle(recenterTarget-recenterFrom)*blend);
+    panCenter=wrapAngle(recenterPanFrom+wrapAngle(recenterPanTarget-recenterPanFrom)*blend);
+    if(t>=1) {recentering=false;recenteredAt=now;++recenterCount;}
+  }
   // A horizontal roll may reverse Z without any vertical tilt. Using its
   // magnitude avoids a fabricated +/-180-degree vertical gaze at that point.
   float pitchOf(const float v[3]) const { return atan2f(flatUpSign*v[1],fabsf(v[2])); }
@@ -466,6 +502,11 @@ class WorldFollower {
   float wakeCenter=0,originUp[3]={};
   uint32_t originSince=0;
   uint8_t originSamples=0;
+  bool recenterSteady=false,recentering=false;
+  float panCenter=0,recenterUp[3]={};
+  float recenterFrom=0,recenterTarget=0,recenterPanFrom=0,recenterPanTarget=0;
+  uint32_t recenterSince=0,recenteredAt=0,recenterAt=0,recenterCount=0;
+
   MotionHeading heading;
   float up[3] = {0,0,-1}, neutralPitch = 0, turned = 0;
   float tableCenter = 0, hangingCenter = 0;

@@ -51,13 +51,15 @@ int main(){
     for(uint32_t end=t+1000;t<end;t+=25){w.feed(flat,g,3,t);CHECK(!w.horizontalOriginReady());}
     for(uint32_t end=t+500;t<end;t+=25)w.feed(flat,g,0,t);
     CHECK(w.horizontalOriginReady() && fabsf(w.tiltX)<.001f);
-    // Once captured, a turn and a long hold cannot silently recenter the face.
+    // Deliberate turns persist until the periodic interval and a steady hold.
     g[2]=-.5f;
     for(uint32_t end=t+1400;t<end;t+=25)w.feed(flat,g,0,t);
     g[2]=0;
-    for(uint32_t end=t+60000;t<end;t+=25)w.feed(flat,g,0,t);
+    for(uint32_t end=t+2000;t<end;t+=25)w.feed(flat,g,0,t);
     CHECK(w.tiltX<-.98f);
-    t+=5000;w.feed(flat,g,0,t);CHECK(w.tiltX<-.98f);
+    for(uint32_t end=t+60000;t<end;t+=25)w.feed(flat,g,0,t);
+    CHECK(fabsf(w.tiltX)<.001f && w.horizontalRecenterCount()>=3);
+    t+=5000;w.feed(flat,g,0,t);CHECK(fabsf(w.tiltX)<.001f);
     w.beginWakeSession();
     for(uint32_t end=t+500;t<end;t+=25)w.feed(flat,g,0,t);
     CHECK(w.horizontalOriginReady() && fabsf(w.tiltX)<.001f);

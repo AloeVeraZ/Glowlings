@@ -93,3 +93,12 @@ Axis rotations are explicitly configured in these tests and in the board driver.
 Session zeroing compensates resting angle, not unknown hardware axis wiring or
 absolute compass heading. Physical behavior on a replacement board still needs
 validation with its driver and axis configuration.
+
+`periodic_gaze_test.cpp` covers the 15-second recenter interval, two-second quiet
+hold and one-second smooth reference blend, including timer rollover and
+10–100 ms sensor reads. It verifies repeated refreshes, movement/interaction
+blocking, cancellation during a blend, invalid samples and sensor gaps. Initial
+wake capture still uses the shorter 150 ms window. References ease independently
+of the orientation integrator and eye springs; up/down behavior is unchanged.
+Raw held-heading layout fixtures explicitly disable the periodic policy so they
+can continue testing geometry and return paths beyond the idle-refresh interval.

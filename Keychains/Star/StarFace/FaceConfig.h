@@ -161,6 +161,11 @@ static constexpr float HORIZONTAL_HANGING_CENTER_DEG = 5.0f;
 // vertical fusion and gesture/wake detectors keep their existing inputs.
 static constexpr float HORIZONTAL_GYRO_BIAS_RAD_S[3] = {.0598092f,-.0189190f,-.0059847f};
 static constexpr float HORIZONTAL_GAZE_SMOOTH_S = .035f;
+static constexpr uint32_t HORIZONTAL_RECENTER_INTERVAL_MS = 15000; // periodic origin refresh, only while steady
+static constexpr uint32_t HORIZONTAL_RECENTER_STILL_MS = 2000;
+static constexpr uint32_t HORIZONTAL_RECENTER_BLEND_MS = 1000;     // ease into the new center
+static constexpr float HORIZONTAL_RECENTER_GYRO_RAD_S = .04f;
+
 static constexpr float GAZE_NEUTRAL_ZONE_DEG = 8.0f; // absorbs small hand/enclosure lean around centre
 static constexpr uint32_t GAZE_POSE_SETTLE_MS = 120; // pose consistency, not a motion-free interval
 static constexpr bool FACE_STAYS_LEVEL = false;   // true: roll the face to stay level with the ground

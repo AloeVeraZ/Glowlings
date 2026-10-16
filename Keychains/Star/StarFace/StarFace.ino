@@ -871,7 +871,11 @@ void followWorld(const float a[3], const float g[3], uint32_t now, bool allowRea
   world.setFlatUpSign(gazeFlatUpSign);
   world.setHorizontalCenter(HORIZONTAL_TABLE_CENTER_DEG, HORIZONTAL_HANGING_CENTER_DEG);
   bool hadOrigin=world.horizontalOriginReady();
-  world.feed(visualA, visualG, shaker.strength, now, visualHeadingG);
+  uint32_t recenters=world.horizontalRecenterCount();
+  bool allowRecenter=!sleepPreparing && !finger.tracking() && !steps.walking;
+  world.feed(visualA, visualG, shaker.strength, now, visualHeadingG,allowRecenter);
+  if(world.horizontalRecenterCount()!=recenters)
+    FACE_LOG(println,"Periodic gaze recenter completed after steady hold");
   if(!hadOrigin && world.horizontalOriginReady())
     FACE_LOG(printf,"Wake gaze center captured: %.1f degrees (horizontal)\n",world.horizontalOriginDegrees());
   static int lastGazePosture = -1;
