@@ -26,7 +26,7 @@ font=ImageFont.truetype(str(font_path),12) if font_path.exists() else ImageFont.
 
 title_font=ImageFont.truetype(str(font_path),18) if font_path.exists() else font
 
-pages=[("01-expressions","15 base expressions"),("02-behaviors","Behaviors 1–16"),("03-behaviors","Behaviors 17–31"),("04-effects","16 effects and wake variants"),("05-blinks-naps","Blink variants and optional nap peeks")]
+pages=[("01-expressions","15 base expressions"),("02-behaviors","Behaviors 1–16"),("03-behaviors","Behaviors 17–32"),("04-effects","16 effects and wake variants"),("05-blinks-naps","Blink variants and optional nap peeks")]
 
 for page,(name,title) in enumerate(pages):
 

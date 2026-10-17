@@ -34,7 +34,23 @@ while charging, including LCD transfer; input processing adds work.
 
 ![Blink types and optional screen-on nap variants](docs/animations/05-blinks-naps.gif)
 
-The [animation inventory](ANIMATIONS.md) lists 15 expression bases, 31 behavior
+### Recenter cue
+
+![Quick recenter cue](docs/animations/06-recenter.gif)
+
+### Always-on: stars falling from the pupils
+
+![Always-on stars falling from each pupil, with a close-up](docs/animations/07-always-on-starfall.gif)
+
+### Double-tap zero
+
+![A tilted pose, a double tap that makes it dead ahead, then turns tracked from there](docs/animations/08-double-tap-zero.gif)
+
+### Battery readout: 95-100% reads 100%
+
+![Battery readout at 100%, 96% and 94%](docs/animations/09-battery-full.gif)
+
+The [animation inventory](ANIMATIONS.md) lists 15 expression bases, 32 behavior
 states, seven blink types and optional variants. These are overlapping layers,
 not counts to add together as distinct animations. Default deep sleep does not
 show the optional screen-on nap peeks. See [preview tools](tools/preview) to regenerate.

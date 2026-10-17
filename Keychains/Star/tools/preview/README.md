@@ -92,6 +92,8 @@ Supply regressions include repeated replug after cell relaxation, a stale high g
 
 `animation_catalog.cpp OUTPUT` emits five sheets of real firmware frames. Build it like `preview.cpp`, create OUTPUT first, then run `python catalog.py OUTPUT GIF_DIR`. The exporter labels all scenes, optimizes the GIFs and verifies decoded sample frames. The fifth sheet includes optional nap-only peeks and the manually callable squeeze blink, which are labeled as available variants in `../../ANIMATIONS.md`.
 
+`highlights.cpp OUTPUT` renders the newest behaviors (always-on starfall with a pupil close-up, the double-tap zero through the real sensor fusion, and the 95-100% battery readout). Build it like `animation_catalog.cpp`, then run `python highlights.py OUTPUT GIF_DIR` to write `07-always-on-starfall.gif`, `08-double-tap-zero.gif` and `09-battery-full.gif`.
+
 ## Wake-relative horizontal center
 
 `wake_origin_test.cpp` exercises the production `WorldFollower::beginWakeSession`
