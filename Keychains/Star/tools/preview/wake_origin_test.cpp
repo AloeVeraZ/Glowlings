@@ -3,6 +3,7 @@
 #include <initializer_list>
 #include <limits>
 #include "MotionGestures.h"
+#include "gaze_expect.h"
 static int fails=0;
 #define CHECK(x) do {if(!(x)){if(fails++<20)printf("FAIL %d: %s\n",__LINE__,#x);}}while(0)
 int main(){
@@ -26,12 +27,12 @@ int main(){
     hold(origin,100);CHECK(!w.horizontalOriginReady() && fabsf(w.tiltX)<.001f);
     hold(origin,500);CHECK(w.horizontalOriginReady() && fabsf(w.tiltX)<.001f);
     float fixed=w.horizontalOriginDegrees();
-    hold(origin+12,500);CHECK(w.tiltX>.27f && w.tiltX<.35f);
-    hold(origin-12,500);CHECK(w.tiltX<-.27f && w.tiltX>-.35f);
+    hold(origin+12,500);CHECK(fabsf(w.tiltX-expectedHorizontalGaze(12))<.025f);
+    hold(origin-12,500);CHECK(fabsf(w.tiltX-expectedHorizontalGaze(-12))<.025f);
     hold(origin,500);CHECK(fabsf(w.tiltX)<.001f);
-    hold(origin+35,2000);CHECK(w.tiltX>.98f);
+    hold(origin+HORIZONTAL_GAZE_FULL_DEG+2,2000);CHECK(w.tiltX*HORIZONTAL_GAZE_SIGN<-.98f);
     CHECK(w.horizontalOriginDegrees()==fixed);
-    now+=5000;hold(origin+35,500);CHECK(w.tiltX>.98f); // Stall isn't a new wake.
+    now+=5000;hold(origin+HORIZONTAL_GAZE_FULL_DEG+2,500);CHECK(w.tiltX*HORIZONTAL_GAZE_SIGN<-.98f); // Stall isn't a new wake.
     hold(origin,500);CHECK(fabsf(w.tiltX)<.001f);
     // A subsequent awake interval gets a fresh pose, not the previous offset.
     w.beginWakeSession();hold(origin-8,600);
@@ -45,10 +46,15 @@ int main(){
     w.feed(bad,g,0,t);t+=25;
     for(uint32_t end=t+100;t<end;t+=25)w.feed(flat,g,0,t);
     CHECK(!w.horizontalOriginReady()); // Invalid sample broke the quiet window.
-    g[2]=.3f;
-    for(uint32_t end=t+1000;t<end;t+=25){w.feed(flat,g,0,t);CHECK(!w.horizontalOriginReady() && w.tiltX==0);}
-    g[2]=0;
+    // A shaking wake waits for the shake to stop...
     for(uint32_t end=t+1000;t<end;t+=25){w.feed(flat,g,3,t);CHECK(!w.horizontalOriginReady());}
+    // ...but a hand that never holds still gets its zero as soon as the
+    // short wake wait has passed, instead of left/right staying dead.
+    g[2]=.3f;
+    uint32_t moving=t;
+    for(;!w.horizontalOriginReady() && t<moving+1000;t+=25)w.feed(flat,g,0,t);
+    CHECK(w.horizontalOriginReady() && t-moving<=50);
+    g[2]=0;
     for(uint32_t end=t+500;t<end;t+=25)w.feed(flat,g,0,t);
     CHECK(w.horizontalOriginReady() && fabsf(w.tiltX)<.001f);
     // Deliberate turns persist until the periodic interval and a steady hold.
@@ -56,7 +62,7 @@ int main(){
     for(uint32_t end=t+1400;t<end;t+=25)w.feed(flat,g,0,t);
     g[2]=0;
     for(uint32_t end=t+2000;t<end;t+=25)w.feed(flat,g,0,t);
-    CHECK(w.tiltX<-.98f);
+    CHECK(w.tiltX*HORIZONTAL_GAZE_SIGN>.98f);
     for(uint32_t end=t+60000;t<end;t+=25)w.feed(flat,g,0,t);
     CHECK(fabsf(w.tiltX)<.001f && w.horizontalRecenterCount()>=3);
     t+=5000;w.feed(flat,g,0,t);CHECK(fabsf(w.tiltX)<.001f);

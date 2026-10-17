@@ -22,9 +22,23 @@ the slow sample rates the render loop allows; `soak_test` drives the animator,
 eye system and renderer with hours of random input under address and undefined-behaviour
 sanitizers.
 
+`imu_test.cpp` compiles the real QMI8658 driver against an I2C stub and checks
+normal/wake-on-motion register settings, signed raw sample decoding, timestamps,
+temperature, sample locking and incomplete/failed transfers. The retired generic
+shake-wake detector and its old thresholds live in `legacy_shake_wake.h` beside
+the comparison test; production wake detection uses `LeftRightWake.h`.
+
 Frames show exactly what the panel receives. Every frame is checked against the palette: each pixel must be a blend of black, `EYE_COLOR` and `PUPIL_COLOR` (anti-aliased edges and the glow), or the optional blush on black; the preview and the soak test fail if any other colour appears. `motion_test` also checks the world-following directions (tilt gaze, level roll, swing, spin, toss) and footstep detection (walking and running, but not shaking, rocking, twisting or knocks).
 Timing on a PC says nothing about ESP32 speed; set `LOG_FPS` in `StarFace.ino`
 to measure frame rate on the board.
+
+Horizontal gaze reaches full travel at 40 degrees, with the existing 4-degree
+neutral zone. `gaze_expect.h` computes partial-travel expectations from those
+config values; physical direction, vertical tracking and response timing remain
+separate checks. `horizontal_tracking_test` checks both sides of the neutral zone
+and partial/full travel in flat and hanging poses. Saturation fixtures use turns
+past the configured full-travel angle. Wake and manual-center tests use the same
+expectations, including movement immediately after a manual zero.
 
 Battery and power behavior is covered by `battery_test.cpp`: charge stages and recovery hysteresis, critical sleep recovery, the initial 30-second window and renewable 15-second inactivity deadlines (including several minutes of interaction, interrupted closing, and millis wrap), single-touch wake (including a tap released before CPU startup), held-touch/I2C-error handling, triple/four-tap anger ending, and gyro-only upright pan. The restored testing-branch wake check accepts sustained shaking on any axis and rejects walking/running traces (including 20-second continuous checks), short/paused shakes, single knocks and gyro-only swinging. One screen press wakes the current firmware; the old generic shake checker is retained only as a detector regression. The shake tests recognize at the same fast sampling interval as the sketch and deliver events at varied render rates.
 # Directional motion wake checks
@@ -103,17 +117,26 @@ of the orientation integrator and eye springs; up/down behavior is unchanged.
 Raw held-heading layout fixtures explicitly disable the periodic policy so they
 can continue testing geometry and return paths beyond the idle-refresh interval.
 
-## Manual center on a single hold
+## Double-tap horizontal zero and recenter cue
 
-`manual_center_test.cpp` reproduces a rightward motion origin, a centered finger
-hold, and release. It checks that the current horizontal pose is adopted without
-changing the vertical reference, that stale pointer/motion targets do not return
-during the five-second centered rest, and that normal motion resumes after it.
-Gesture streams distinguish a first two-second hold from the tap-then-hold mode
-toggle, including exact-threshold release, long holds, drags, lost contact and
-timer rollover. Holding longer keeps the rest alive; release starts its full
-five seconds. New touch can interrupt the rest; critical sleep keeps priority.
+`manual_center_test.cpp` reproduces a rightward motion origin, a double tap,
+and setting the new zero. It exercises the real fusion-to-animator-to-pupil
+path: the fused left/right target responds within 150 ms of zeroing, and the
+normal double-click reaction finishes at that new zero. It checks return tracking, relative gyro turns,
+vertical-reference preservation, and stale-input fallback, including timer wrap.
 
-Connected-board check, October 15, 2026: after upload and flash-hash verification,
-the user confirmed that single-hold centering and the separate tap-then-hold
-always-on toggle both work. The six local regression checks also passed.
+Gesture streams distinguish a double tap from the tap-then-hold mode toggle,
+including the 420 ms boundary, long holds, drags, distant taps, missed press reports
+and timer wrap. Recenter fires once on the second tap; subsequent taps still
+reach the existing angry and battery actions.
+There is no five-second display lock. Resting gaze uses the rebased motion target
+instead of reviving a stale sideways glance. New touch works normally; critical
+sleep keeps priority.
+
+Manual recentering keeps the existing double-click surprised reaction and clears
+the old finger target. The 460 ms `RECENTER` cue squeezes both eyes, pops them open,
+then settles after an idle automatic recenter completion; protected reactions and
+sleep retain priority. Checks cover the retained double-click reaction, zero
+persistence, cue timing, palette and automatic completion. `preview strip OUTDIR recenter`
+exports frames from the actual renderer. The revised gesture and cue still need
+a physical check on Star.

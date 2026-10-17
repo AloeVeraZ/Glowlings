@@ -184,6 +184,7 @@ void CreatureAnimator::showBattery(int percent, uint32_t now) {
 
 void CreatureAnimator::startWake(uint32_t now, bool fromShake, bool touched) {
   touchAngerProtected = false;
+  manualGazeZero=false;
   if (fromShake) {
     wakeVariant = WAKE_STARTLED_INDEX;
     wakeScale = .8f;
@@ -221,21 +222,28 @@ bool CreatureAnimator::sleepFinished(uint32_t now) const {
 
 void CreatureAnimator::setPointer(float x, float y, uint32_t now) {
   if (touchAngerPauseActive(now)) return;
-  centeredRest=false;
+  manualGazeZero=false;
   pointerX = clampf(x, -1.0f, 1.0f);
   pointerY = clampf(y, -1.0f, 1.0f);
   pointerAt = now;
 }
 
-void CreatureAnimator::centerAfterHold(uint32_t now) {
+void CreatureAnimator::centerGaze(uint32_t now) {
   if(current==Mood::SLEEPY || current==Mood::BATTERY || touchAngerPauseActive(now))return;
   pointerHeld=false;pointerX=pointerY=0;pointerAt=now-1300;
-  holdAnnoy=0;tiltX=swingX=0;centeredRest=true;centeredSince=now;
+  // Both axes: the pose it is in right now is dead ahead.
+  holdAnnoy=0;tiltX=tiltY=swingX=swingY=0;manualGazeZero=true;
   if(current==Mood::FOLLOWING)enterMood(Mood::IDLE,now,0);
   ownedGaze=true;
-  eyes->setGazeBias(0,tiltY);
-  eyes->setLookOffset(0,swingY);
-  eyes->lookAt(0,tiltY,1.8f);
+  eyes->setGazeBias(0,0);
+  eyes->setLookOffset(0,0);
+  eyes->lookAt(0,0,1.8f);
+}
+
+bool CreatureAnimator::showRecenter(uint32_t now,bool direct) {
+  if(current==Mood::SLEEPY || batteryDisplayActive(now) || touchAngerPauseActive(now))return false;
+  return direct ? react(Mood::RECENTER,now,RECENTER_ANIM_MS)
+                : reactPassive(Mood::RECENTER,now,RECENTER_ANIM_MS);
 }
 
 void CreatureAnimator::applyInertia(float ax, float ay) {
@@ -379,7 +387,11 @@ void CreatureAnimator::update(float dt, uint32_t now) {
   }
   float chargePhase = current == Mood::BATTERY ? (uint32_t(age) % 1400) / 1400.0f : 0;
   // The readout reports the live state immediately; the eyes keep their soft color fade.
-  eyes->setBatteryDisplay(batteryDisplayPercent, morph, swirl, battery.charging, chargePhase, battery.color());
+  // A near-full cell reads as full: 95-100% shows 100% and a full tank.
+  BatteryState shown = battery;
+  int shownPercent = batteryDisplayPercent >= BATTERY_SHOWS_FULL_PERCENT ? 100 : batteryDisplayPercent;
+  if (shownPercent == 100) shown.percent = 100; // full colour too, not a slightly tired tint
+  eyes->setBatteryDisplay(shownPercent, morph, swirl, battery.charging, chargePhase, shown.color());
   faceCharge = approach(faceCharge, visualCharge ? 1.0f : 0.0f, visualCharge ? 5.0f : 3.0f, dt);
   float closingFade = current == Mood::SLEEPY ? 1.0f - smoothstep(0.0f, float(SLEEP_SEQUENCE_MS), float(age)) : 1.0f;
   eyes->setFaceCharging(visualCharge ? faceCharge * closingFade * (1.0f - morph) : 0, phase,
@@ -612,6 +624,18 @@ void CreatureAnimator::updateFace(float dt, uint32_t now) {
       if(crossed(620)) eyes->wink(0);
       if(crossed(1020)) eyes->wink(1);
       break;
+    case Mood::RECENTER:
+      // A quick focusing squeeze, a little open-eyed pop, then a soft landing.
+      // Only the lids/shape acknowledge the new zero; gaze remains live.
+      scripted=true;blinkOK=false;speed=2.4f;openSpeed=3;
+      if(age<100) {
+        e=NEUTRAL;open[0]=open[1]=.15f;
+        for(int i=0;i<2;++i)eyes->setShapeAccent(i,1.06f,.86f);
+      } else if(age<240) {
+        e=NEUTRAL;b=HAPPY;t=.18f;open[0]=open[1]=1.08f;
+        for(int i=0;i<2;++i)eyes->setShapeAccent(i,.96f,1.08f);
+      } else { e=NEUTRAL;b=HAPPY;t=.18f*(1-smoothstep(240,460,float(age))); }
+      break;
     case Mood::AUTO_SLEEP:
       scripted=true;blinkOK=false;speed=1.5f;openSpeed=1.5f;
       e=NEUTRAL;b=SLEEPY;t=age<700?.35f:0;
@@ -737,8 +761,6 @@ void CreatureAnimator::sleepScript(uint32_t now, Expression &e, float &k, float 
 // ---- Gaze: the pointer, mood-specific looks, or the eyes' own idle wandering ----
 
 void CreatureAnimator::updateGaze(uint32_t now) {
-  bool manualCentered=centeredRest && now-centeredSince<TOUCH_CENTER_REST_MS;
-  if(!manualCentered)centeredRest=false;
   eyes->setGazeBias(touchAngerProtected ? 0 : tiltX, touchAngerProtected ? 0 : tiltY);
   // The face stays level and the eyes keep looking at you while it is swung
   // (not while waking or asleep).
@@ -747,8 +769,8 @@ void CreatureAnimator::updateGaze(uint32_t now) {
   bool expand = awake && current != Mood::BATTERY;
   eyes->setPresence(expand ? fmaxf(motionLevel,expressive ? .75f : 0)*(1-.45f*batteryFatigue) : 0,expand);
   eyes->setFaceRoll(awake ? faceRoll : 0.0f);
-  eyes->setLookOffset(awake && !touchAngerProtected && !manualCentered ? swingX : 0.0f,
-                      awake && !touchAngerProtected && !manualCentered ? swingY : 0.0f);
+  eyes->setLookOffset(awake && !touchAngerProtected ? swingX : 0.0f,
+                      awake && !touchAngerProtected ? swingY : 0.0f);
   // Interested pupils: a little wider while something is going on.
   float attention = fminf(1.0f, sqrtf(tiltX * tiltX + tiltY * tiltY) + (pointerHeld ? .6f : 0.0f)
                                + (heldUp ? .6f : 0.0f) + (walking ? .3f : 0.0f));
@@ -797,6 +819,7 @@ void CreatureAnimator::updateGaze(uint32_t now) {
     }
     case Mood::WAKE_UP: case Mood::SLEEPY: own = true; gx = scriptGX; gy = scriptGY; speed = scriptGazeSpeed; break;
     case Mood::ALWAYS_ON: case Mood::AUTO_SLEEP: own=true;gx=gy=0;speed=1.8f;break;
+    case Mood::RECENTER: own=true;gx=tiltX;gy=tiltY;speed=1.8f;break;
     case Mood::BATTERY: own = true; gx = gy = 0; speed = .9f; break;
     case Mood::CONFUSED: own = true; gx = .35f; gy = -.4f; speed = .8f; break;
     case Mood::CURIOUS: own = true; gx = .6f * lookSide; gy = -.18f; speed = .9f; break;
@@ -840,17 +863,18 @@ void CreatureAnimator::updateGaze(uint32_t now) {
     gx = tiltX; gy = tiltY;
     own = true; speed = fmaxf(speed, 1.6f);
   }
-  // Keep the manual center through release and for five seconds afterward.
-  // New touch, critical sleep and the battery screen keep their priorities.
-  if(manualCentered && awake && current!=Mood::BATTERY && !usePointer) {
-    own=true;gx=gy=0;speed=fmaxf(speed,1.8f);
+  // After a manual zero, resting gaze follows the NEW motion reference.
+  // No timed lock: a turn moves the eyes immediately, and returning to the
+  // zero pose centers them. Do not revive a stale idle glance on release.
+  if(manualGazeZero && current==Mood::IDLE && !usePointer) {
+    own=true;gx=tiltX;gy=tiltY;speed=fmaxf(speed,1.8f);
   }
   if (own) eyes->lookAt(gx, gy, speed);
   else if (ownedGaze) eyes->lookAround();   // a reaction ended: tilt and idle looks take over at once
   ownedGaze = own;
   bool sacOn = current != Mood::DIZZY && current != Mood::SLEEPY && current != Mood::BATTERY &&
                !(current == Mood::WAKE_UP && age < 900);
-  eyes->setSaccades(sacOn && !touchAngerProtected && !manualCentered, current == Mood::ANGRY || current == Mood::ANXIOUS);
+  eyes->setSaccades(sacOn && !touchAngerProtected && current!=Mood::RECENTER, current == Mood::ANGRY || current == Mood::ANXIOUS);
 }
 
 // ---- Body: the pair of eyes as one mass, with weight, inertia and recoil ----
@@ -863,6 +887,9 @@ void CreatureAnimator::updateBody() {
       tx = (.9f * sinf(clock * TAU_F / 5.3f) + tiltX * motionLevel * 2.5f) * (1 - .75f * batteryFatigue);
       ty = .8f * sinf(clock * TAU_F / 4.1f) * (1 - .75f * batteryFatigue);
       f = 2.8f; z = .8f;
+      break;
+    case Mood::RECENTER:
+      ty=age<100?2:age<240?-2:0;f=7;z=.8f;
       break;
     case Mood::WINK:
       tx = -lookSide * 3.5f * sinf(PI_F * clamp01(t / .76f));

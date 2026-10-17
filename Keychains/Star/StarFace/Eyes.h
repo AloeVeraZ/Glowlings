@@ -64,7 +64,7 @@ class Eyes {
   void setDrowsiness(float d) { drowsy = anim::clamp01(d); }
   void setEyeColor(uint32_t rgb) { if (renderer) renderer->setEyeColor(rgb); }
   void setFaceCharging(float amount, float phase, float stopPhase = -1) { if (renderer) renderer->setFaceCharging(amount, phase, stopPhase); }
-  void setAwakeMode(bool enabled, float cue) { if (renderer) renderer->setAwakeMode(enabled,cue); }
+  void setAwakeMode(bool enabled, float cue) { if (renderer) renderer->setAwakeMode(enabled,cue,clock); }
   void setChargingJoy(float amount) { joyTarget = anim::clamp01(amount); }
   void setBatteryDisplay(int percent, float morph, float swirl, bool charging = false, float phase = 0,
                          uint32_t displayColor = UINT32_MAX) {

@@ -47,12 +47,14 @@ struct AwakeLimit {
 // Tap, then hold the second press. Presence must stay confirmed by TouchTracker;
 // single holds, ordinary double taps, drags and missing contact never toggle.
 struct AlwaysOnGesture {
-  static constexpr uint32_t GAP_MS=420, HOLD_MS=850;
+  static constexpr uint32_t GAP_MS=TOUCH_CENTER_GAP_MS, HOLD_MS=850;
+  bool doubleTapped=false; // second short release; a held second press only toggles the mode
   bool haveTap=false, candidate=false, latched=false;
   uint32_t tapAt=0,pressAt=0;
   int tapX=0,tapY=0,pressX=0,pressY=0;
   bool reserved() const { return candidate || latched; }
   bool feed(const TouchTracker::Result &r,uint32_t now,bool allowed=true) {
+    doubleTapped=false;
     bool consumed=reserved();
     if(!allowed) { haveTap=candidate=latched=false; return false; }
     if(r.kind==TouchTracker::PRESS) {
@@ -67,6 +69,12 @@ struct AlwaysOnGesture {
     }
     if(r.kind==TouchTracker::TAP || r.kind==TouchTracker::RELEASE || r.kind==TouchTracker::SWIPE) {
       bool wasLatched=latched;
+      int dx=r.x-tapX,dy=r.y-tapY;
+      // TouchTracker can also confirm a completed quick tap whose press IRQ
+      // was missed. It must still be near the preceding tap and within time.
+      bool pairedTap=(candidate && now-pressAt<=TAP_MAX_MS) ||
+                     (haveTap && now-tapAt<=GAP_MS && dx*dx+dy*dy<=30*30);
+      doubleTapped=pairedTap && !wasLatched && r.kind==TouchTracker::TAP;
       candidate=latched=false;
       haveTap=r.kind==TouchTracker::TAP && !wasLatched;
       if(haveTap) {tapAt=now;tapX=r.x;tapY=r.y;}
@@ -78,33 +86,6 @@ struct AlwaysOnGesture {
     if(!tracking) {candidate=latched=false;return false;}
     if(!candidate || latched || now-pressAt<HOLD_MS) return false;
     candidate=false;latched=true;haveTap=false;return true;
-  }
-};
-
-// The first press can center the face. A second press reserved for the mode
-// gesture is excluded by the caller. One action per hold; drags cancel it.
-struct HoldToCenterGesture {
-  bool candidate=false,latched=false,released=false;
-  uint32_t pressAt=0;
-  int x=0,y=0;
-  bool reserved() const { return latched; }
-  bool feed(const TouchTracker::Result &r,uint32_t now,bool allowed=true) {
-    released=false;
-    if(!allowed){candidate=latched=false;return false;}
-    if(r.kind==TouchTracker::PRESS){candidate=true;latched=false;x=r.x;y=r.y;pressAt=now;}
-    if(r.kind==TouchTracker::MOVE && candidate){
-      int dx=r.x-x,dy=r.y-y;if(dx*dx+dy*dy>20*20)candidate=latched=false;
-    }
-    if(r.kind==TouchTracker::RELEASE || r.kind==TouchTracker::TAP || r.kind==TouchTracker::SWIPE){
-      released=candidate && r.kind==TouchTracker::RELEASE && (latched || r.heldMs>=TOUCH_CENTER_PRESS_MS);
-      bool consumed=latched || released;candidate=latched=false;return consumed;
-    }
-    return latched;
-  }
-  bool poll(bool tracking,uint32_t now) {
-    if(!tracking){candidate=latched=false;return false;}
-    if(!candidate || latched || now-pressAt<TOUCH_CENTER_PRESS_MS)return false;
-    latched=true;return true;
   }
 };
 

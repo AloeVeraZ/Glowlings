@@ -8,7 +8,7 @@ The five embedded [GIF sheets in the README](README.md#animation-gallery) previe
 
 Neutral, happy, sad, angry, focused, surprised, sleepy, squint, curious, confused, suspicious, worried, annoyed, love (heart pupils), dizzy (spiral pupils).
 
-## 31 behavior states
+## 32 behavior states
 
 | # | Behavior | What is shown |
 |---|---|---|
@@ -41,8 +41,17 @@ Neutral, happy, sad, angry, focused, surprised, sleepy, squint, curious, confuse
 | 27 | Giggle | Repeated happy bounces and recovery blink |
 | 28 | Sneeze | Wind-up, open, squeeze and confused recovery |
 | 29 | Sassy | Raised lid, eye roll and wink |
-| 30 | Always-on enabled | Squeeze, pop open, alternating winks and subtle pupil sparkles |
+| 30 | Always-on enabled | Squeeze, pop open, alternating winks, and little stars falling out of each pupil while the mode is on |
 | 31 | Automatic sleep restored | Settling blink and fading closed-eye cue |
+| 32 | Recenter | 460 ms focusing squeeze, open-eyed pop and soft landing; gaze stays live |
+
+Double-tap near the same spot to set a new horizontal zero. The second press
+starts within 420 ms and remains a short tap. A single long hold no longer
+recenters. Double-clicking keeps its normal surprised reaction while adopting the
+new zero. The separate quick cue acknowledges an automatic recenter after its
+reference blend finishes while idle; protected reactions and sleep keep priority.
+
+![Quick recenter cue rendered by the firmware](docs/animations/06-recenter.gif)
 
 ## Blink and motion layers
 

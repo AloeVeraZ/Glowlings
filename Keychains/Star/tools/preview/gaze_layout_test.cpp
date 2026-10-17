@@ -56,12 +56,12 @@ int main(int argc,char **argv) {
     hold(1000,zero);
     float turn[3]={0,hanging?-sign*.52359878f:0,hanging?0:-sign*.52359878f}; // 30 deg/s
     hold(4000,turn); // 120 degrees out, well past full eye travel
-    CHECK(world.tiltX*sign<-.98f && fabsf(world.tiltY)<.02f);
-    hold(20000,zero); CHECK(world.tiltX*sign<-.98f); // no automatic recenter while held
-    now+=500; hold(100,zero); CHECK(world.tiltX*sign<-.98f); // a missed-read interval cannot reset the turn
+    CHECK(world.tiltX*sign*HORIZONTAL_GAZE_SIGN>.98f && fabsf(world.tiltY)<.02f);
+    hold(20000,zero); CHECK(world.tiltX*sign*HORIZONTAL_GAZE_SIGN>.98f); // no automatic recenter while held
+    now+=500; hold(100,zero); CHECK(world.tiltX*sign*HORIZONTAL_GAZE_SIGN>.98f); // a missed-read interval cannot reset the turn
     for (float &v:turn) v=-v;
     hold(2500,turn); // still 45 degrees out after returning 75 degrees
-    CHECK(world.tiltX*sign<-.98f);
+    CHECK(world.tiltX*sign*HORIZONTAL_GAZE_SIGN>.98f);
     hold(1500,turn); hold(700,zero);
     CHECK(fabsf(world.tiltX)<.02f && fabsf(world.tiltY)<.02f);
   }
@@ -77,7 +77,7 @@ int main(int argc,char **argv) {
       float a[3]={sign*9.81f*sinf(theta),hanging?9.81f*cosf(theta):0,hanging?0:9.81f*cosf(theta)};
       float g[3]={0,hanging?0:-omega,hanging?omega:0};
       world.feed(a,g,0,now,nullptr,false);now+=25;
-      if (degrees>40) CHECK(world.tiltX*sign>.95f);
+      if (degrees>HORIZONTAL_GAZE_FULL_DEG+5) CHECK(world.tiltX*sign*HORIZONTAL_GAZE_SIGN<-.95f);
       CHECK(fabsf(world.tiltY)<.02f);
     }
     for (int i=0;i<40;++i) {world.feed(neutral,zero,0,now,nullptr,false);now+=25;}

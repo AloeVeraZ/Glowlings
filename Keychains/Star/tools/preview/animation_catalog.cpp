@@ -22,6 +22,7 @@ struct Scene {
    else if(m==Mood::BATTERY){c.setBatteryLevel(73,true);run(2200);c.showBattery(73,now);}
    else if(m==Mood::ALWAYS_ON)c.setAlwaysOn(true,now);
    else if(m==Mood::AUTO_SLEEP){c.setAlwaysOn(true,now);run(2000);c.setAlwaysOn(false,now);}
+   else if(m==Mood::RECENTER){c.centerGaze(now);c.showRecenter(now,true);}
    else if(m!=Mood::IDLE) {
     if(m==Mood::UPSIDE_DOWN)c.setUpsideDown(true,now);
     if(m==Mood::FOLLOWING)c.setPointerHeld(true,now);
@@ -109,7 +110,7 @@ struct Scene {
   }
  }
 };
-const char* moods[]={"Idle / glances","Happy","Sad","Angry / huff","Dizzy / recovery","Falling asleep","Surprised","Anxious","Wake up","Battery reservoir","Boop","Petted / rocking","Swipe pull","Finger / hold anger","Confused","Shy","Cold shiver","Love hearts","Upside down","Curious","Yawn","Look around","Wink","Playful wiggle","Stretch","Peek","Giggle","Sneeze","Sassy eye-roll","Always-on ON","Always-on OFF"};
+const char* moods[]={"Idle / glances","Happy","Sad","Angry / huff","Dizzy / recovery","Falling asleep","Surprised","Anxious","Wake up","Battery reservoir","Boop","Petted / rocking","Swipe pull","Finger / hold anger","Confused","Shy","Cold shiver","Love hearts","Upside down","Curious","Yawn","Look around","Wink","Playful wiggle","Stretch","Peek","Giggle","Sneeze","Sassy eye-roll","Always-on ON","Always-on OFF","Recenter / focus"};
 const char* effects[]={"Blink","Double blink","Left wink","Right wink","Gaze / saccades","Tilt / swing recoil","Walking / steps","Running / steps","Shake rattle","Charging / unplug","Liquid / cable change","Battery fatigue","Wake: classic","Wake: one eye","Wake: startled","Wake: sleepy"};
 const char* variants[]={"Normal blink","Fast blink","Long blink","Half blink","Slow blink","Squeeze blink","Uneven blink","Nap: left peek","Nap: right peek","Nap: flutter","Nap: both peek","Release huff / sulk"};
 int main(int argc,char**argv) {
@@ -118,7 +119,7 @@ int main(int argc,char**argv) {
  int firstPage=argc>2?atoi(argv[2]):0,lastPage=argc>2?firstPage+1:5;
  if(firstPage<0 || firstPage>4)return 2;
  for(int page=firstPage;page<lastPage;++page) {
-  int group=page==0?0:page==3?2:page==4?3:1,start=page==2?16:0,count=group==0?15:group==2?16:group==3?12:page==1?16:15;
+  int group=page==0?0:page==3?2:page==4?3:1,start=page==2?16:0,count=group==0?15:group==2?16:group==3?12:16;
   std::vector<std::unique_ptr<Scene>> scenes;
   char path[1024];snprintf(path,sizeof(path),"%s/page%d.tsv",argv[1],page);FILE *meta=fopen(path,"w");
   for(int i=0;i<count;++i){int id=start+i;scenes.emplace_back(new Scene(group,id));fprintf(meta,"%d\t%s\n",i,group==0?expressionName(Expression(id)):group==1?moods[id]:group==2?effects[id]:variants[id]);}

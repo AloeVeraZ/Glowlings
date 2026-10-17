@@ -1,9 +1,11 @@
+#include <vector>
 #include <stdio.h>
 #include <stdlib.h>
 #include <initializer_list>
 #include "BatteryState.h"
 #include "InteractionPolicy.h"
 #include "MotionGestures.h"
+#include "gaze_expect.h"
 #include "TouchTracker.h"
 #include "palette.h"
 
@@ -366,7 +368,7 @@ int main(int argc, char **argv) {
     world.feed(a, g, 0, 1);
     g[1] = float(sign);
     for (uint32_t t = 26; t <= 526; t += 25) world.feed(a, g, 0, t);
-    CHECK(world.tiltX * sign < -.65f); // heading gaze follows the inverted horizontal direction
+    CHECK(fabsf(world.tiltX*sign+expectedHorizontalGaze(.525f/.017453293f))<.08f); // heading direction, allowing smoothing lag
   }
   {
     WorldFollower world;
@@ -404,6 +406,22 @@ int main(int argc, char **argv) {
     creature.react(tapMood(3), 8100, ANGRY_ANIM_MS);
     for (uint32_t t = 8116; t < 10300; t += 16) creature.update(.016f, t);
     CHECK(creature.mood() == Mood::IDLE); // anger ends, including at low charge
+  }
+  { // 95-100% reads as a full 100% (figure and tank); 94% still reads 94.
+    auto readout = [&](int level) {
+      EyeRenderer renderer; Eyes eyes; CreatureAnimator creature;
+      renderer.begin(fb, nullptr); eyes.begin(&renderer, 1234, 0);
+      creature.begin(&eyes, 1234, 0); creature.setBatteryLevel(level);
+      creature.setIdleActsAllowed(false); eyes.setAutoBlink(false); eyes.setIdle(false);
+      for (uint32_t now = 16; now <= 8000; now += 16) creature.update(.016f, now);
+      creature.showBattery(level, 8000);
+      for (uint32_t now = 8016; now <= 9600; now += 16) creature.update(.016f, now);
+      renderer.invalidate(); eyes.draw();
+      return std::vector<uint16_t>(fb, fb + SCREEN_WIDTH * SCREEN_HEIGHT);
+    };
+    std::vector<uint16_t> full = readout(100);
+    for (int level : {95,96,97,98,99}) CHECK(readout(level) == full);
+    CHECK(readout(BATTERY_SHOWS_FULL_PERCENT - 1) != full);
   }
   for (int level : {-1,0,5,10,25,50,73,85,100}) {
     EyeRenderer renderer; Eyes eyes; CreatureAnimator creature;

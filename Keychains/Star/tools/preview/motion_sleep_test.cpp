@@ -2,6 +2,7 @@
 #include <math.h>
 #include "InteractionPolicy.h"
 #include "MotionGestures.h"
+#include "gaze_expect.h"
 #include "TouchTracker.h"
 
 #define CHECK(x) do { if (!(x)) { printf("FAIL line %d: %s\n", __LINE__, #x); ++fails; } } while (0)
@@ -107,9 +108,12 @@ int main() {
     CHECK(direction < 2 ? fabsf(flick[1]) < .02f : fabsf(flick[0]) < .02f);
     rotateMotionXY(a,GAZE_IMU_ROTATION);
     for (uint32_t t = 801; t < 2400; t += 25) world.feed(a,zero,0,t);
-    CHECK(direction == 0 ? world.tiltX > .75f : direction == 1 ? world.tiltX < -.75f :
+    CHECK(direction == 0 ? fabsf(world.tiltX-expectedHorizontalGaze(25))<.03f : direction == 1 ? fabsf(world.tiltX+expectedHorizontalGaze(25))<.03f :
           direction == 2 ? world.tiltY < -.35f : world.tiltY > .35f);
     CHECK(direction < 2 ? fabsf(world.tiltY) < .02f : fabsf(world.tiltX) < .02f);
+    // Physical directions: a left tilt and a right tilt look opposite ways,
+    // the way the board-confirmed HORIZONTAL_GAZE_SIGN sets.
+    if(direction < 2) CHECK((direction == 0 ? -1 : 1)*HORIZONTAL_GAZE_SIGN*world.tiltX > .5f);
     // Predict a real continuous tilt with both sensors, through the same map.
     WorldFollower moving; moving.setFlatUpSign(GAZE_FLAT_UP_SIGN);
     moving.feed(flat,zero,0,1);
@@ -127,7 +131,7 @@ int main() {
     float along = direction < 2 ? moving.tiltX : moving.tiltY;
     float cross = direction < 2 ? moving.tiltY : moving.tiltX;
     float cue = direction < 2 ? moving.swingX : moving.swingY;
-    CHECK(along*(direction < 2 ? (direction == 0 ? 1 : -1) : (direction == 2 ? -1 : 1)) > (direction < 2 ? .35f : .30f));
+    CHECK(along*(direction < 2 ? (direction == 0 ? -1 : 1)*HORIZONTAL_GAZE_SIGN : (direction == 2 ? -1 : 1)) > (direction < 2 ? .35f : .30f));
     CHECK(cue*along > 0 && fabsf(cross) < .02f);
   }
   // Generic fusion supports either Z mounting sign after screen conversion.
@@ -157,7 +161,7 @@ int main() {
       a[2] = flatSign*cd*9.81f;
       a[0] = -a[0]; a[1] *= flatSign;
       for (uint32_t t = 801; t < 1400; t += 25) world.feed(a,g,0,t);
-      CHECK(direction == 0 ? world.tiltX < -.60f : direction == 1 ? world.tiltX > .60f :
+      CHECK(direction == 0 ? fabsf(world.tiltX+expectedHorizontalGaze(.35f/.017453293f))<.025f : direction == 1 ? fabsf(world.tiltX-expectedHorizontalGaze(.35f/.017453293f))<.025f :
             direction == 2 ? world.tiltY > .25f : world.tiltY < -.25f);
     }
     for (int direction : {-1,1}) {
@@ -166,7 +170,7 @@ int main() {
       world.feed(a,g,0,1);
       g[2] = -flatSign*direction;
       for (uint32_t t = 26; t <= 526; t += 25) world.feed(a,g,0,t);
-      CHECK(world.tiltX*direction < -.65f); // heading turns share the inverted horizontal response
+      CHECK(fabsf(world.tiltX*direction+expectedHorizontalGaze(.525f/.017453293f))<.08f); // heading direction, allowing smoothing lag
     }
   }
   {
@@ -197,14 +201,14 @@ int main() {
     // This was a moving-hand reading, not a stationary calibration. Repeating
     // its ~0.1 rad/s heading rotation for eight seconds turns about 48 degrees.
     // Count that real slow turn rather than discard it with the old cutoff.
-    CHECK(world.tiltX<-.98f && fabsf(world.tiltY)<.02f);
+    CHECK(world.tiltX*HORIZONTAL_GAZE_SIGN>.98f && fabsf(world.tiltY)<.02f);
     for (uint32_t t=13001;t<16000;t+=25) world.feed(flat,quiet,0,t);
     CHECK(!world.uprightReferenceActive() && fabsf(world.tiltY)<.02f);
     // Rolling side-on should look sideways, never fabricate a vertical turn.
     float sideways[3]={-9.81f,0,0};
     for (uint32_t t=16001;t<19000;t+=25) world.feed(hanging,quiet,0,t);
     for (uint32_t t=19001;t<22000;t+=25) world.feed(sideways,quiet,0,t);
-    CHECK(world.tiltX<-.98f && fabsf(world.tiltY)<.03f);
+    CHECK(world.tiltX*HORIZONTAL_GAZE_SIGN>.98f && fabsf(world.tiltY)<.03f);
     // A shake-biased first sample cannot reverse later up/down tracking.
     WorldFollower transient; transient.setFlatUpSign(GAZE_FLAT_UP_SIGN);
     float reversedFirst[3]={hanging[0],-hanging[1],hanging[2]};
@@ -222,7 +226,7 @@ int main() {
       CHECK(fabsf(flatRoll.tiltY)<.02f);
     }
   }
-  // Outward horizontal response: small tilts are visible within 150 ms,
+  // Horizontal response: small tilts are visible within 150 ms,
   // at different sampling rates, without creating vertical movement.
   for (bool hanging : {false,true}) for (int sign : {-1,1}) for (uint32_t period : {10u,25u,50u}) {
     WorldFollower world; world.setFlatUpSign(GAZE_FLAT_UP_SIGN);
@@ -231,7 +235,7 @@ int main() {
     const float angle=.17453293f; // 10 degrees
     float tilted[3]={sign*9.81f*sinf(angle),hanging ? 9.81f*cosf(angle) : 0,hanging ? 0 : 9.81f*cosf(angle)};
     for (uint32_t elapsed=period;elapsed<=150;elapsed+=period) world.feed(tilted,quiet,0,1001+elapsed);
-    CHECK(world.tiltX*sign>.19f && world.tiltX*sign<.25f);
+    CHECK(fabsf(world.tiltX*sign-expectedHorizontalGaze(10))<.025f);
     CHECK(fabsf(world.tiltY)<.02f);
     for (uint32_t elapsed=period;elapsed<=300;elapsed+=period) world.feed(neutral,quiet,0,1151+elapsed);
     CHECK(fabsf(world.tiltX)<.02f && fabsf(world.tiltY)<.02f);
@@ -274,8 +278,8 @@ int main() {
     hold(down50Pose,60000); CHECK(world.tiltY > .98f && fabsf(world.tiltX) < .02f);
     hold(hangingPose,1000); CHECK(fabsf(world.tiltY) < .02f);
     const int left[3] = {-3712,-1731,0}, right[3] = {-3712,1731,0};
-    hold(left,1000); CHECK(world.tiltX > .75f && fabsf(world.tiltY) < .02f);
-    hold(right,1000); CHECK(world.tiltX < -.75f && fabsf(world.tiltY) < .02f);
+    hold(left,1000); CHECK(fabsf(world.tiltX-expectedHorizontalGaze(25))<.03f && fabsf(world.tiltY) < .02f);
+    hold(right,1000); CHECK(fabsf(world.tiltX+expectedHorizontalGaze(25))<.03f && fabsf(world.tiltY) < .02f);
     hold(tablePose,1000); CHECK(fabsf(world.tiltX) < .02f && fabsf(world.tiltY) < .02f);
     hold(hangingPose,1000); CHECK(fabsf(world.tiltY) < .02f);
     // A sensor sampling gap (or waking while tilted) must not center a 50-degree lean.
@@ -289,7 +293,7 @@ int main() {
     for (uint32_t t = 1001; t < 2500; t += 25) world.feed(flat,g,0,t);
     CHECK(fabsf(world.tiltX) < .05f && fabsf(world.tiltY) < .05f);
     for (uint32_t t = 2501; t < 3000; t += 25) world.feed(right,g,0,t);
-    CHECK(world.tiltX < -.75f); // upright wake does not break subsequent flat tilts
+    CHECK(fabsf(world.tiltX+expectedHorizontalGaze(25))<.03f); // upright wake does not break subsequent flat tilts
   }
   printf("Sleep cancellation, held touch, deliberate motion and USB-bottom gaze: %s (%d failures)\n", fails ? "FAILED" : "PASSED", fails);
   return fails ? 1 : 0;

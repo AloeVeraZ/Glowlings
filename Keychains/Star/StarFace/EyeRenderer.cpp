@@ -301,13 +301,47 @@ void EyeRenderer::renderEye(const EyeFrame &e, const Box &clip, const Bubble *bu
   const float coreR = e.coreR;
   const float g1x = e.cx + e.glintX, g1y = e.cy + e.glintY, g1r = e.glintR;
   const float g2x = e.cx + e.glint2X, g2y = e.cy + e.glint2Y, g2r = e.glint2R;
-  // A small, static sparkle in the black pupil marks always-on. Reuse the
-  // pupil coordinates and clip to the actual lid aperture; no overlay pass.
+  // Always-on: tiny eye-coloured stars fall out of the middle of the black
+  // pupil and fade where the coloured eye begins. They live in the pupil's
+  // own (squashed) coordinates, so they follow its shape, lids and glints.
   const float awakeMark = (alwaysOn ? 1.0f : clamp01(modeCue)) * (1-heart) * (1-spiral) *
                           smoothRange(.2f,.65f,aperture) * (1-smoothRange(0,.45f,batteryMorph));
-  const float sparkR = fmin2(4.0f*SCREEN_MIN_SIDE/240.0f,pr*.2f);
-  const float invSparkR = 1.0f/fmax2(.5f,sparkR);
-  const float sparkReach = sparkR+1.6f/fmax2(.05f,pScale);
+  struct Star { float x, y, r, invR, reach, light; };
+  Star stars[2*STARFALL_COUNT];
+  int starCount = 0;
+  if (awakeMark > 0 && pupil) {
+    const float scale = SCREEN_MIN_SIDE/240.0f;
+    for (int i = 0; i < STARFALL_COUNT; ++i) {
+      // Each star has its own pace; every fall picks a fresh direction.
+      const float period = 1.7f + .37f*i;
+      float u = sparkleClock/period + i*.29f + (e.rightEye ? .5f : 0);
+      const int cycle = int(floorf(u));
+      const float t = u - cycle;
+      uint32_t h = uint32_t(cycle)*2654435761u ^ uint32_t(i*40503 + (e.rightEye ? 977 : 0));
+      h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
+      const float angle = (h & 1023) * (TAU/1024.0f), ca = cosf(angle), sa = sinf(angle);
+      const float size = fmin2(pr*.2f,(2.0f + 1.1f*(.5f+.5f*sinf(sparkleClock*9 + i*2.1f)))*scale);
+      // The star, then a fainter, smaller ghost a moment behind it: a trail.
+      for (int ghost = 0; ghost < 2; ++ghost) {
+        const float tt = t - ghost*.07f;
+        if (tt <= 0) continue;
+        // Accelerates outward like a dropped spark, with a little gravity,
+        // and is gone as it reaches the coloured eye.
+        const float rho = .1f + .98f*tt*sqrtf(tt);
+        const float px = rho*ca, py = rho*sa + .28f*tt*tt;
+        const float dist = sqrtf(px*px + py*py);
+        float light = awakeMark*STARFALL_LIGHT*smoothRange(0,.15f,t)*(1-smoothRange(.8f,1.0f,dist));
+        if (ghost) light *= .38f;
+        if (light < .01f) continue;
+        Star &s = stars[starCount++];
+        s.x = px*pr; s.y = py*pr;
+        s.r = ghost ? size*.65f : size;
+        s.invR = 1.0f/fmax2(.5f,s.r);
+        s.reach = s.r + 2.2f/fmax2(.05f,pScale);
+        s.light = light;
+      }
+    }
+  }
   const uint16_t bodyPacked = eyeShade(.84f);
 
   for (int y = y0; y <= y1; ++y) {
@@ -423,13 +457,19 @@ void EyeRenderer::renderEye(const EyeFrame &e, const Box &clip, const Bubble *bu
         aP *= 1.0f - aG;
         aC *= 1.0f - aG;
       }
-      if (awakeMark > 0 && aP >= 1 && fabsf(sx) < sparkReach && fabsf(sy) < sparkReach) {
-        // Concave diamond sides make a gentle four-point glint. Its soft edge
-        // uses the existing eye shade ramp and stays entirely inside the iris.
-        float ax=fabsf(sx),ay=fabsf(sy);
-        float dSpark=(ax+ay+1.5f*ax*ay*invSparkR-sparkR)*.7071f*pScale;
-        float light=awakeMark*(.36f*cover(dSpark)+.045f*cover(dSpark-1.1f))*aEye;
-        if(light>0) { line[x]=eyeShade(light+rim);continue; }
+      if (starCount && aP >= 1) {
+        // Only on solid black pupil: behind the catch-lights, and gone the
+        // moment the coloured eye starts. Concave diamond sides make each a
+        // little four-point star, with a faint halo.
+        float light = 0;
+        for (int i = 0; i < starCount; ++i) {
+          const Star &s = stars[i];
+          float ax = fabsf(sx - s.x), ay = fabsf(sy - s.y);
+          if (ax >= s.reach || ay >= s.reach) continue;
+          float dStar = (ax + ay + 1.5f*ax*ay*s.invR - s.r)*.7071f*pScale;
+          light = fmax2(light, s.light*(cover(dStar) + .2f*cover(dStar - 1.4f)));
+        }
+        if (light > 0) { line[x] = eyeShade(light*aEye + rim); continue; }
       }
       if (aP <= 0 && aEye >= 1.0f) { line[x] = surfacePacked; continue; }
       if (aC >= 1.0f) { line[x] = PIXEL_BACKGROUND; continue; }

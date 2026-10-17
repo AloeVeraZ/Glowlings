@@ -60,7 +60,7 @@ int main() {
  run(4200);CHECK(!c.finishingCharge());run(3000);CHECK(renderer.getEyeColor()==EYE_COLOR);
  eyes.draw();for(int y=205;y<SCREEN_HEIGHT;++y) for(int x=0;x<SCREEN_WIDTH;++x) CHECK(fb[y*SCREEN_WIDTH+x]==0);
  c.setAlwaysOn(true,now);CHECK(c.alwaysOnEnabled() && c.mood()==Mood::ALWAYS_ON);run(2000);eyes.draw();
- // Toggling the renderer on the same geometry changes only black pupil centres.
+ // Toggling the renderer on the same geometry changes only black pupil pixels.
  renderer.setAwakeMode(false,0);renderer.compose(eyes.frames());
  std::vector<uint16_t> unmarked(fb,fb+SCREEN_WIDTH*SCREEN_HEIGHT);
  renderer.setAwakeMode(true,0);renderer.compose(eyes.frames());
@@ -72,7 +72,7 @@ int main() {
    for(int i=0;i<2;++i) {
      const EyeFrame &f=eyes.frames()[i];
      float dx=(x-f.cx-f.pupilX)/f.pupilSX,dy=(y-f.cy-f.pupilY)/f.pupilSY;
-     if(dx*dx+dy*dy<f.pupilR*f.pupilR*.25f){inside=true;++marks[i];}
+     if(dx*dx+dy*dy<f.pupilR*f.pupilR){inside=true;++marks[i];} // starfall stays inside the black pupil
    }
    CHECK(inside);CHECK(y<205);
  }

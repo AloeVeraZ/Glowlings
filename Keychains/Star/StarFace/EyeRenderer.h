@@ -41,6 +41,9 @@ constexpr uint16_t panel565(uint32_t rgb) {
 static constexpr uint16_t PIXEL_BACKGROUND = 0x0000;
 static constexpr uint16_t PIXEL_EYE = panel565(EYE_COLOR);
 static constexpr uint16_t PIXEL_PUPIL = panel565(PUPIL_COLOR);
+// Always-on cue: little stars that fall from the pupil centre into its edge.
+static constexpr int STARFALL_COUNT = 5;
+static constexpr float STARFALL_LIGHT = .85f; // peak brightness, as a share of the eye colour
 static constexpr uint16_t PIXEL_CHEEK = panel565(CHEEK_COLOR);
 
 // Draws the eyes as smooth vector shapes on pure black. Each eye is an oval
@@ -64,7 +67,8 @@ class EyeRenderer {
   void setFaceCharging(float amount, float phase, float stopPhase = -1) {
     faceCharge = amount; faceChargePhase = phase; faceChargeStop = stopPhase;
   }
-  void setAwakeMode(bool enabled, float cue) { alwaysOn = enabled; modeCue = cue; }
+  // clock: seconds, for the always-on starfall inside the pupils.
+  void setAwakeMode(bool enabled, float cue, float clock = 0) { alwaysOn = enabled; modeCue = cue; sparkleClock = clock; }
   void draw(const EyeFrame eyes[2]);
   // Draws into the framebuffer without pushing (host previews, screenshots).
   void compose(const EyeFrame eyes[2]);
@@ -84,7 +88,7 @@ class EyeRenderer {
   float batteryChargePhase = 0;
   float faceCharge = 0, faceChargePhase = 0, faceChargeStop = -1;
   bool alwaysOn = false;
-  float modeCue = 0;
+  float modeCue = 0, sparkleClock = 0;
   bool opaqueBatteryCached = false, cachedCharging = false;
   int cachedPercent = -2;
   int cachedBatteryFrame = -1;

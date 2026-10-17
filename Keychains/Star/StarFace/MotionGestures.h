@@ -283,15 +283,30 @@ class WorldFollower {
   // Explicitly start a new awake interval. Touch renewals and brief sensor
   // gaps do not move the origin; a periodic steady-pose refresh can ease it.
   void beginWakeSession() {
-    wakeRelative=true; originPending=true; originCandidate=false;
-    seeded=false; lastAt=0; heading.reset(); tiltX=swingX=0;
+    wakeRelative=true; originPending=true; originCandidate=false; originWaiting=false;
+    seeded=false; lastGravityReliable=false; lastAt=0; heading.reset(); tiltX=swingX=0;
     panCenter=0; recenterSteady=recentering=false; recenterCount=0;
+    pitchZeroActive=pitchZeroPending=false;
   }
-  // A touch release can adopt the current pose without restarting vertical
-  // fusion, the awake timer or the mode. Capture uses the usual stable window.
-  void requestHorizontalCenter() {
-    wakeRelative=true;originPending=true;originCandidate=false;
+  // Manual zero is immediate when the fused sensor sample is fresh. Reset
+  // the relative heading, not gyro bias, and preserve vertical fusion.
+  // Only a missing/invalid sample needs the ordinary stable-capture fallback.
+  void requestHorizontalCenter(uint32_t now) {
+    wakeRelative=true;originCandidate=false;
     tiltX=swingX=0;recenterSteady=recentering=false;
+    if(seeded && lastGravityReliable && now-lastAt<=250) {
+      wakeCenter=horizontalAngleOfUp();heading.reset();panCenter=0;
+      originPending=false;recenteredAt=now;
+    } else {originPending=true;originWaiting=false;}
+  }
+  // Double tap: the current pose becomes dead ahead on BOTH axes until the
+  // next wake. Up/down is then measured from this pose, not from "flat" or
+  // "hanging", and keeps that zero when the pose crosses between the two.
+  void requestCenter(uint32_t now) {
+    requestHorizontalCenter(now);
+    tiltY=swingY=0;
+    if(seeded && lastGravityReliable && now-lastAt<=250) capturePitchZero();
+    else pitchZeroPending=true;
   }
   bool horizontalOriginReady() const { return wakeRelative && !originPending; }
   float horizontalOriginDegrees() const { return wakeCenter / .017453293f; }
@@ -335,6 +350,7 @@ class WorldFollower {
     if (fabsf(turned) > SPIN_TURNS_FOR_DIZZY * 6.2831853f) { turned = 0; spun = true; }
 
     bool reliable = n > 7.5f && n < 12.0f;
+    lastGravityReliable=reliable;
     if(!reliable) recenterSteady=recentering=false;
     if (!seeded) {
       if (!reliable) return;
@@ -394,13 +410,14 @@ class WorldFollower {
     float pitchPlane = up[1]*up[1] + up[2]*up[2];
     // Keep the gravity reference's hemisphere beyond a side-on lean. An
     // unsigned denominator folded 90..180 degrees back toward centre.
-    float horizontalReference = wearPose ? hangingUpSign*up[1] : flatUpSign*up[2];
-    float horizontalAngle = atan2f(-up[0],copysignf(sqrtf(pitchPlane),horizontalReference));
+    float horizontalAngle = horizontalAngleOfUp();
     if (originPending) {
+      if (!originWaiting) {originWaiting=true;originWaitSince=now;}
       // Use a brief quiet, valid gravity window, not the wake shake or a
       // clipped/freefall sample. This never learns gyro bias from hand motion.
       const float *originGyro=headingGyro ? headingGyro : g;
       bool quiet=reliable && shakeStrength<2 && motion::len3(originGyro)<.20f;
+      bool capture=false;
       if (!quiet) originCandidate=false;
       else {
         float unit[3]={a[0]/n,a[1]/n,a[2]/n};
@@ -410,12 +427,18 @@ class WorldFollower {
           originCandidate=true; originSince=now; originSamples=1;
         } else {
           if(originSamples<255)++originSamples;
-          if(now-originSince>=150 && originSamples>=3) {
-            wakeCenter=horizontalAngle; originPending=false;
-            heading.reset();pan=panCenter=0;tiltX=swingX=0;
-            recenteredAt=now;recenterSteady=recentering=false;
-          }
+          capture=now-originSince>=150 && originSamples>=3;
         }
+      }
+      // A hand is rarely that still. Shortly after waking, once any wake
+      // shake has stopped, adopt the fused pose rather than leave left/right
+      // stuck at zero until the board happens to rest.
+      if (!capture && reliable && shakeStrength<2 && now-originWaitSince>=WAKE_ORIGIN_MAX_WAIT_MS)
+        capture=true;
+      if (capture) {
+        wakeCenter=horizontalAngle; originPending=originWaiting=false;
+        heading.reset();pan=panCenter=0;tiltX=swingX=0;
+        recenteredAt=now;recenterSteady=recentering=false;
       }
     }
     if(horizontalOriginReady())
@@ -426,15 +449,16 @@ class WorldFollower {
     float relativePan=wakeRelative ? wrapAngle(pan-panCenter) : pan;
     float gx = originPending ? 0 : HORIZONTAL_GAZE_SIGN*gentleAngle(relativeAngle+relativePan,
                                                HORIZONTAL_GAZE_FULL_DEG,HORIZONTAL_GAZE_NEUTRAL_DEG);
-    // Project pitch relative to upright directly. Using |Y| prevents rolling
-    // left/right through a side-on pose from inventing a vertical 180° turn.
-    float pitch = wearPose ? atan2f(-copysignf(1.0f,neutralPitch)*flatUpSign*up[2],fabsf(up[1])) : pitchOf(up);
+    float pitch = postureVerticalAngle();
+    if (pitchZeroPending && reliable) capturePitchZero();
+    if (pitchZeroActive) pitch = pitchZeroSense*wrapAngle(continuousPitchOfUp()-pitchZero);
     float gy = gentleAngle(pitch,pitch > 0 ? DOWNWARD_GAZE_FULL_DEG : VERTICAL_GAZE_FULL_DEG);
     float confidence = fmaxf(0,fminf(1,(pitchPlane-.025f)/.175f));
     gy *= confidence*confidence*(3-2*confidence);
     if (transitioning) {
+      // A manual zero is continuous across the posture change: no fade.
       float blend = fminf(1,(now-poseChangedAt)/300.0f);
-      gy *= blend*blend*(3-2*blend);
+      if (!pitchZeroActive) gy *= blend*blend*(3-2*blend);
       if (blend >= 1) transitioning = false;
     }
     float k = 1 - expf(-dt / .065f);
@@ -464,6 +488,29 @@ class WorldFollower {
     swingY += (fmaxf(-.6f, fminf(.6f, sy)) - swingY) * sk;
   }
  private:
+  float horizontalAngleOfUp() const {
+    float reference=wearPose ? hangingUpSign*up[1] : flatUpSign*up[2];
+    return atan2f(-up[0],copysignf(sqrtf(up[1]*up[1]+up[2]*up[2]),reference));
+  }
+  // Pitch from the current posture's neutral (flat or hanging upright).
+  // Using |Y| prevents rolling left/right through a side-on pose from
+  // inventing a vertical 180° turn.
+  float postureVerticalAngle() const {
+    return wearPose ? atan2f(-copysignf(1.0f,neutralPitch)*flatUpSign*up[2],fabsf(up[1])) : pitchOf(up);
+  }
+  // The same pitch on one scale for both postures: 0 = flat, +/-90° = hanging
+  // (sign by which edge is up). Table and hanging values agree where the
+  // posture switches, so a zero taken in one posture still holds in the other.
+  float continuousPitchOfUp() const {
+    if (!wearPose) return pitchOf(up);
+    return flatUpSign*hangingUpSign*(postureVerticalAngle()+1.57079633f);
+  }
+  void capturePitchZero() {
+    pitchZero=continuousPitchOfUp();
+    // Keep this posture's up/down sense, including an upside-down hang.
+    pitchZeroSense=wearPose ? flatUpSign*hangingUpSign : 1.0f;
+    pitchZeroActive=true;pitchZeroPending=false;
+  }
   static float wrapAngle(float a) {
     if(a>3.14159265f)a-=6.28318531f;
     if(a<-3.14159265f)a+=6.28318531f;
@@ -504,9 +551,11 @@ class WorldFollower {
     float magnitude = fmaxf(0,fabsf(radians)-dead);
     return copysignf(fminf(1,magnitude/fmaxf(.01f,fullDegrees*.017453293f-dead)),radians);
   }
-  bool wakeRelative=false,originPending=false,originCandidate=false;
+  bool wakeRelative=false,originPending=false,originCandidate=false,lastGravityReliable=false;
+  bool pitchZeroActive=false,pitchZeroPending=false,originWaiting=false;
+  float pitchZero=0,pitchZeroSense=1;
   float wakeCenter=0,originUp[3]={};
-  uint32_t originSince=0;
+  uint32_t originSince=0,originWaitSince=0;
   uint8_t originSamples=0;
   bool recenterSteady=false,recentering=false;
   float panCenter=0,recenterUp[3]={};
