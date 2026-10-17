@@ -11,6 +11,7 @@ static constexpr uint32_t ANGRY_ANIM_MS = 1900;
 static constexpr uint32_t BATTERY_MORPH_MS = 280;
 static constexpr uint32_t BATTERY_SHOW_MS = 4200;
 static constexpr uint32_t SLEEP_SEQUENCE_MS = 5400;
+static constexpr uint32_t RECENTER_ANIM_MS = 460;
 
 // What the creature is doing. Moods are reactions to the outside world
 // (touch, motion, time); each one drives the Eyes through their public API.
@@ -21,7 +22,7 @@ enum class Mood : uint8_t {
   SHIVER, LOVED, UPSIDE_DOWN,
   CURIOUS, YAWN, LOOK_AROUND,
   WINK, PLAYFUL, STRETCH,
-  PEEK, GIGGLE, SNEEZE, SASSY, ALWAYS_ON, AUTO_SLEEP // original short performances while awake
+  PEEK, GIGGLE, SNEEZE, SASSY, ALWAYS_ON, AUTO_SLEEP, RECENTER // short performances while awake
 };
 
 // The creature's behaviour on top of the eye system: it turns events into
@@ -81,6 +82,8 @@ class CreatureAnimator {
   // How long it has been lying perfectly still (it gets bored, then sleepy).
   void setStillFor(uint32_t ms) { stillMs = ms; }
   void setPointer(float x, float y, uint32_t now);
+  void centerGaze(uint32_t now); // adopt the new zero without replacing the current reaction
+  bool showRecenter(uint32_t now, bool direct = false);
   // A finger is on the screen. The longer it stays, the angrier it gets.
   void setPointerHeld(bool held, uint32_t now) {
     if (touchAngerPauseActive(now)) { pointerHeld = false; return; }
@@ -158,6 +161,7 @@ class CreatureAnimator {
   float pointerX = 0, pointerY = 0;
   uint32_t pointerAt = 0, holdSince = 0;
   bool pointerHeld = false, upsideDown = false;
+  bool manualGazeZero = false;
   uint32_t upsideSince = 0;
   float holdAnnoy = 0;
   float angerResidue = 1, grumpy = 0;

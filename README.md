@@ -18,6 +18,11 @@ detected, the remaining bubbles finish their journey before the green fades.
 Tap once, then hold the second press to toggle always-on; repeat to restore
 inactivity sleep. Critical low battery still forces shutdown.
 
+Each wake also captures a steady left/right origin: the pose held just after
+waking becomes the initial center of the eyes. A periodic refresh gently adopts
+a new center about every 15 seconds when held steady for two seconds. Always-on uses a
+subtle sparkle inside each black pupil as its persistent mode cue.
+
 ![Star motion, charging and always-on previews](Keychains/Star/docs/animations/04-effects.gif)
 
 These previews use the actual firmware renderer; GIF playback does not represent

@@ -22,9 +22,23 @@ the slow sample rates the render loop allows; `soak_test` drives the animator,
 eye system and renderer with hours of random input under address and undefined-behaviour
 sanitizers.
 
+`imu_test.cpp` compiles the real QMI8658 driver against an I2C stub and checks
+normal/wake-on-motion register settings, signed raw sample decoding, timestamps,
+temperature, sample locking and incomplete/failed transfers. The retired generic
+shake-wake detector and its old thresholds live in `legacy_shake_wake.h` beside
+the comparison test; production wake detection uses `LeftRightWake.h`.
+
 Frames show exactly what the panel receives. Every frame is checked against the palette: each pixel must be a blend of black, `EYE_COLOR` and `PUPIL_COLOR` (anti-aliased edges and the glow), or the optional blush on black; the preview and the soak test fail if any other colour appears. `motion_test` also checks the world-following directions (tilt gaze, level roll, swing, spin, toss) and footstep detection (walking and running, but not shaking, rocking, twisting or knocks).
 Timing on a PC says nothing about ESP32 speed; set `LOG_FPS` in `StarFace.ino`
 to measure frame rate on the board.
+
+Horizontal gaze reaches full travel at 40 degrees, with the existing 4-degree
+neutral zone. `gaze_expect.h` computes partial-travel expectations from those
+config values; physical direction, vertical tracking and response timing remain
+separate checks. `horizontal_tracking_test` checks both sides of the neutral zone
+and partial/full travel in flat and hanging poses. Saturation fixtures use turns
+past the configured full-travel angle. Wake and manual-center tests use the same
+expectations, including movement immediately after a manual zero.
 
 Battery and power behavior is covered by `battery_test.cpp`: charge stages and recovery hysteresis, critical sleep recovery, the initial 30-second window and renewable 15-second inactivity deadlines (including several minutes of interaction, interrupted closing, and millis wrap), single-touch wake (including a tap released before CPU startup), held-touch/I2C-error handling, triple/four-tap anger ending, and gyro-only upright pan. The restored testing-branch wake check accepts sustained shaking on any axis and rejects walking/running traces (including 20-second continuous checks), short/paused shakes, single knocks and gyro-only swinging. One screen press wakes the current firmware; the old generic shake checker is retained only as a detector regression. The shake tests recognize at the same fast sampling interval as the sketch and deliver events at varied render rates.
 # Directional motion wake checks
@@ -74,6 +88,57 @@ Supply regressions include repeated replug after cell relaxation, a stale high g
 
 ## Liquid reservoir, unplug finish and always-on
 
-`always_on_test.cpp` tests tap/hold recognition, repeated toggles, normal double taps, long single holds, drags, lost contact, timer wrap, an hour with inactivity sleep disabled, automatic sleep after switching off, and critical shutdown priority. It also checks mode indicator cleanup and the charge finish scheduler: active drops only decrease after unplug and all finish before the color fades. Battery regressions verify the new reservoir palette, capacity persistence and immediate live-readout color changes; near-closed blink checks remain exact.
+`always_on_test.cpp` tests tap/hold recognition, repeated toggles, normal double taps, long single holds, drags, lost contact, timer wrap, an hour with inactivity sleep disabled, automatic sleep after switching off, and critical shutdown priority. It also checks pupil-only mode marks, exact closed-lid cleanup and no interference with heart/spiral pupils and the charge finish scheduler: active drops only decrease after unplug and all finish before the color fades. Battery regressions verify the new reservoir palette, capacity persistence and immediate live-readout color changes; near-closed blink checks remain exact.
 
 `animation_catalog.cpp OUTPUT` emits five sheets of real firmware frames. Build it like `preview.cpp`, create OUTPUT first, then run `python catalog.py OUTPUT GIF_DIR`. The exporter labels all scenes, optimizes the GIFs and verifies decoded sample frames. The fifth sheet includes optional nap-only peeks and the manually callable squeeze blink, which are labeled as available variants in `../../ANIMATIONS.md`.
+
+`highlights.cpp OUTPUT` renders the newest behaviors (always-on starfall with a pupil close-up, the double-tap zero through the real sensor fusion, and the 95-100% battery readout). Build it like `animation_catalog.cpp`, then run `python highlights.py OUTPUT GIF_DIR` to write `07-always-on-starfall.gif`, `08-double-tap-zero.gif` and `09-battery-full.gif`.
+
+## Wake-relative horizontal center
+
+`wake_origin_test.cpp` exercises the production `WorldFollower::beginWakeSession`
+path. A stable gravity window (at least 150 ms and three readings) establishes
+neutral; noisy, moving, shaking or invalid samples cannot finish capture. The
+640-case matrix covers resting angles, both gravity polarities, flat/hanging
+poses, all four configured XY mounting rotations, 10–100 ms reads and timer wrap.
+Additional cases check a second wake at another angle, holds, long sensor gaps,
+heading turns, and sideways/inverted resting origins. Existing orientation-loop,
+gaze-layout, motion/sleep, always-on and battery checks remain in the suite.
+
+Axis rotations are explicitly configured in these tests and in the board driver.
+Session zeroing compensates resting angle, not unknown hardware axis wiring or
+absolute compass heading. Physical behavior on a replacement board still needs
+validation with its driver and axis configuration.
+
+`periodic_gaze_test.cpp` covers the 15-second recenter interval, two-second quiet
+hold and one-second smooth reference blend, including timer rollover and
+10–100 ms sensor reads. It verifies repeated refreshes, movement/interaction
+blocking, cancellation during a blend, invalid samples and sensor gaps. Initial
+wake capture still uses the shorter 150 ms window. References ease independently
+of the orientation integrator and eye springs; up/down behavior is unchanged.
+Raw held-heading layout fixtures explicitly disable the periodic policy so they
+can continue testing geometry and return paths beyond the idle-refresh interval.
+
+## Double-tap horizontal zero and recenter cue
+
+`manual_center_test.cpp` reproduces a rightward motion origin, a double tap,
+and setting the new zero. It exercises the real fusion-to-animator-to-pupil
+path: the fused left/right target responds within 150 ms of zeroing, and the
+normal double-click reaction finishes at that new zero. It checks return tracking, relative gyro turns,
+vertical-reference preservation, and stale-input fallback, including timer wrap.
+
+Gesture streams distinguish a double tap from the tap-then-hold mode toggle,
+including the 420 ms boundary, long holds, drags, distant taps, missed press reports
+and timer wrap. Recenter fires once on the second tap; subsequent taps still
+reach the existing angry and battery actions.
+There is no five-second display lock. Resting gaze uses the rebased motion target
+instead of reviving a stale sideways glance. New touch works normally; critical
+sleep keeps priority.
+
+Manual recentering keeps the existing double-click surprised reaction and clears
+the old finger target. The 460 ms `RECENTER` cue squeezes both eyes, pops them open,
+then settles after an idle automatic recenter completion; protected reactions and
+sleep retain priority. Checks cover the retained double-click reaction, zero
+persistence, cue timing, palette and automatic completion. `preview strip OUTDIR recenter`
+exports frames from the actual renderer. The revised gesture and cue still need
+a physical check on Star.

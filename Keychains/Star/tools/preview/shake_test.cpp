@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <initializer_list>
-#include "ShakeDetector.h"
+#include "legacy_shake_wake.h"
 
 static uint32_t rng = 12345;
 static float frand() { rng = rng * 1664525u + 1013904223u; return (rng >> 8) / 16777216.0f; }

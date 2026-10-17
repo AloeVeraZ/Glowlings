@@ -195,6 +195,7 @@ int main(int argc, char **argv) {
     uint32_t total = 1200, step = 66;
     if (name == "wake") { sim.c.startSleep(sim.now, 0); sim.run(SLEEP_SEQUENCE_MS + 500);
                           sim.c.startWake(sim.now, false); total = 3600; step = 200; }
+    else if (name == "recenter") { sim.c.setTilt(.7f,0);sim.run(600);sim.c.centerGaze(sim.now);sim.c.showRecenter(sim.now,true);total=800;step=40; }
     else if (name == "sleep") { sim.c.startSleep(sim.now, .3f); total = SLEEP_SEQUENCE_MS; step = 300; }
     else if (name == "charging") { sim.c.setBatteryLevel(88, true); total = 4800; step = 80; }
     else if (name == "shake") { sim.c.impact(14, 4); sim.c.react(Mood::DIZZY, sim.now, DIZZY_ANIM_MS);

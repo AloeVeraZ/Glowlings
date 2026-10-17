@@ -102,14 +102,7 @@ static constexpr float SHAKE_DIZZY_STRENGTH = 2.5f;  // moderate shakes reach th
 static constexpr uint32_t SHAKE_DIZZY_HOLD_MS = 1000; // about one second of recognized shaking
 static constexpr uint32_t SHAKE_DIZZY_DROPOUT_MS = 500; // tolerate uneven strokes and brief pauses
 static constexpr uint8_t SHAKE_DIZZY_SWINGS = 4;     // four alternating strokes, rather than six
-// Asleep it is much harder to wake: it takes a steady shake, kept up for
-// SHAKE_WAKE_HOLD_MS (short dips under SHAKE_WAKE_DROPOUT_MS are forgiven).
-static constexpr float SHAKE_WAKE_STRENGTH = 3.5f;   // average shake strength to count as shaking
-static constexpr float SHAKE_WAKE_STROKE_MS2 = 11.0f; // one stroke while waking it
-static constexpr uint32_t SHAKE_WAKE_HOLD_MS = 1500; // 25% shorter than the previous two seconds
-static constexpr uint32_t SHAKE_WAKE_DROPOUT_MS = 350;
-static constexpr float SHAKE_GYRO_RAD_S = 3.0f;   // while asleep, rotation faster than this counts toward the wake shake
-static constexpr uint8_t SHAKE_WAKE_SWINGS = 6; // actual alternating strong strokes, not footsteps
+// Recorded directional wake has its own thresholds.
 // Recorded intended left/right wake: AY acceleration and GZ rotation dominate.
 // Recorded carried forward/back movement: GY rotation dominates instead.
 static constexpr float WAKE_AY_ENERGY_SHARE = .50f;
@@ -120,8 +113,8 @@ static constexpr float WAKE_GZ_RMS_RAD_S = 2.5f;
 static constexpr float WAKE_AY_STROKE_MS2 = 7.0f;
 static constexpr float WAKE_GZ_REVERSAL_RAD_S = 1.8f;
 // A short, brisk directional gesture wakes sooner without admitting the slow
-// pendulum swing of a star hanging from a bag/pants. Legacy ShakeWakeCheck
-// keeps its separate SHAKE_WAKE_* thresholds; only LeftRightWake uses these.
+// pendulum swing of a star hanging from a bag/pants.
+static constexpr uint32_t WAKE_DIRECTION_DROPOUT_MS = 350;
 static constexpr uint32_t DIRECTIONAL_WAKE_HOLD_MS = 350;
 static constexpr uint32_t WAKE_DIRECTION_SETTLE_MS = 80;
 static constexpr uint32_t WAKE_REVERSAL_MIN_MS = 40; // debounce impact ringing
@@ -135,7 +128,7 @@ static constexpr float BUMP_MS2 = 9.0f;           // a single knock: recoil and 
 static constexpr float PICKUP_MS2 = 2.2f;         // picked up / moved: ends a nap
 
 // ---- Following the world (motion sensor) --------------------------------------
-// Horizontal gaze looks outward, opposite the previous low-side response; the
+// Horizontal gaze follows the sideways tilt confirmed on the physical board; the
 // face rolls to stay level when the star is turned. A held tilt retains its
 // direction. Acceleration and angular velocity must use the same right-handed
 // rotation before fusion; a gyro X turn tilts around X, rather than along X.
@@ -149,8 +142,8 @@ static constexpr uint8_t GAZE_IMU_ROTATION = 3;
 static constexpr float GAZE_FLAT_UP_SIGN = 1.0f;
 static constexpr float VERTICAL_GAZE_FULL_DEG = 50.0f; // full upward look relative to the resting pose
 static constexpr float DOWNWARD_GAZE_FULL_DEG = 25.0f; // full downward look at the previous halfway point
-static constexpr float HORIZONTAL_GAZE_SIGN = -1.0f; // invert left/right gaze after fusion, not sensor axes
-static constexpr float HORIZONTAL_GAZE_FULL_DEG = 30.0f;
+static constexpr float HORIZONTAL_GAZE_SIGN = -1.0f; // invert left/right gaze after fusion (confirmed on the board)
+static constexpr float HORIZONTAL_GAZE_FULL_DEG = 40.0f;
 static constexpr float HORIZONTAL_GAZE_NEUTRAL_DEG = 4.0f;
 // Enclosure/viewing trim: the measured normal hanging pose leans about 5-6
 // degrees left in the visual gravity frame. Keep the table reference separate.
@@ -161,6 +154,12 @@ static constexpr float HORIZONTAL_HANGING_CENTER_DEG = 5.0f;
 // vertical fusion and gesture/wake detectors keep their existing inputs.
 static constexpr float HORIZONTAL_GYRO_BIAS_RAD_S[3] = {.0598092f,-.0189190f,-.0059847f};
 static constexpr float HORIZONTAL_GAZE_SMOOTH_S = .035f;
+static constexpr uint32_t WAKE_ORIGIN_MAX_WAIT_MS = 300; // after a wake, stop waiting for a still pose and use the current one
+static constexpr uint32_t HORIZONTAL_RECENTER_INTERVAL_MS = 15000; // periodic origin refresh, only while steady
+static constexpr uint32_t HORIZONTAL_RECENTER_STILL_MS = 2000;
+static constexpr uint32_t HORIZONTAL_RECENTER_BLEND_MS = 1000;     // ease into the new center
+static constexpr float HORIZONTAL_RECENTER_GYRO_RAD_S = .04f;
+
 static constexpr float GAZE_NEUTRAL_ZONE_DEG = 8.0f; // absorbs small hand/enclosure lean around centre
 static constexpr uint32_t GAZE_POSE_SETTLE_MS = 120; // pose consistency, not a motion-free interval
 static constexpr bool FACE_STAYS_LEVEL = false;   // true: roll the face to stay level with the ground
@@ -194,7 +193,6 @@ static constexpr uint32_t ROCK_MAX_HALF_MS = 1400;
 static constexpr uint8_t ROCK_SWINGS = 3;         // swings in a row before it feels petted
 static constexpr float ROCK_MAX_BOUNCE_MS2 = 1.6f; // jostling above this (walking) is not rocking
 static constexpr uint32_t UPSIDE_DOWN_MS = 500;   // held upside down this long annoys it
-static constexpr uint32_t FACE_DOWN_SLEEP_MS = 0; // orientation never forces shutdown during interaction
 
 // ---- Touch -------------------------------------------------------------------------
 // While a finger is down the eyes follow it. Releasing after a quick flick is
@@ -204,6 +202,7 @@ static constexpr float TAP_MAX_MOVE_PX = 22;      // ...and moves less than this
 static constexpr float SWIPE_MIN_PX = 35;         // a swipe flicks at least this far...
 static constexpr float SWIPE_MIN_SPEED = 250;     // ...at least this fast (px/s) at the end
 static constexpr uint32_t SWIPE_MAX_SHORT_MS = 700; // or: a press this short that moved far
+static constexpr uint32_t TOUCH_CENTER_GAP_MS = 420; // tap, release, tap again: manual center
 static constexpr uint32_t HOLD_ANGER_START_MS = 1200; // holding longer than this annoys it...
 static constexpr uint32_t HOLD_ANGER_FULL_MS = 4500;  // ...and by this long it is furious
 static constexpr uint32_t TOUCH_RELEASE_TIMEOUT_MS = 250; // no report this long = finger lifted
@@ -232,6 +231,12 @@ static constexpr uint32_t TOUCH_WAKE_WINDOW_MS = 3000;
 static constexpr uint32_t IDLE_NAP_MS = 45000;    // dim-nap timeout when !AUTO_DEEP_SLEEP
 static constexpr uint8_t BACKLIGHT_PERCENT = 70;
 static constexpr uint8_t NAP_BACKLIGHT_PERCENT = 14;
+// Always-on power saver. Rendering keeps the CPU at full load, so after this
+// long without a touch or a pick-up it redraws less often and dims a little.
+// A touch, or picking it up, restores the full rate and brightness at once.
+static constexpr uint32_t ALWAYS_ON_REST_MS = 20000;
+static constexpr uint32_t ALWAYS_ON_REST_FRAME_US = 100000; // 10 FPS while resting
+static constexpr float ALWAYS_ON_REST_BACKLIGHT = .65f;     // perceptual level (about 40% duty)
 static constexpr bool START_ASLEEP = true;        // power-on/reset leaves the display dark
 static constexpr uint32_t BATTERY_CHECK_MS = 10000;
 static constexpr uint32_t POWER_CHECK_MS = 1000; // notice USB insertion/removal while awake
@@ -254,6 +259,7 @@ static constexpr uint32_t BATTERY_PERCENT_STEP_MS = 10000; // maximum observed e
 static constexpr int BATTERY_PERCENT_DEADBAND = 1;
 static constexpr uint32_t BATTERY_RECHECK_S = 60; // critical sleep: check for charging once a minute
 static constexpr int CRITICAL_BATTERY_PERCENT = 3;
+static constexpr int BATTERY_SHOWS_FULL_PERCENT = 95; // readout shows 100% from here up
 static constexpr int BATTERY_RECOVER_PERCENT = 8; // avoids repeatedly waking near empty
 
 // ---- Derived (do not edit) -------------------------------------------------------

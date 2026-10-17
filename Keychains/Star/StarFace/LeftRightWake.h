@@ -50,7 +50,7 @@ class LeftRightWakeCheck {
                       gyroEnergy[2] >= WAKE_GZ_RMS_RAD_S * WAKE_GZ_RMS_RAD_S;
     // Check stale sweeps BEFORE counting a new one. Otherwise a late sample
     // can refresh the timestamp and let a slow dangling swing sneak through.
-    if (active && (carry || now - lastGoodAt > SHAKE_WAKE_DROPOUT_MS ||
+    if (active && (carry || now - lastGoodAt > WAKE_DIRECTION_DROPOUT_MS ||
         (swings && now - lastAccelSwingAt > WAKE_REVERSAL_MAX_MS) ||
         (gyroSwings && now - lastGyroSwingAt > WAKE_REVERSAL_MAX_MS))) {
       active = false;

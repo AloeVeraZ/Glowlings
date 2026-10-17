@@ -280,6 +280,38 @@ class WorldFollower {
   float swingX = 0, swingY = 0, motionLevel = 0;
   bool spun = false, weightless = false;
   bool uprightReferenceActive() const { return wearPose; }
+  // Explicitly start a new awake interval. Touch renewals and brief sensor
+  // gaps do not move the origin; a periodic steady-pose refresh can ease it.
+  void beginWakeSession() {
+    wakeRelative=true; originPending=true; originCandidate=false; originWaiting=false;
+    seeded=false; lastGravityReliable=false; lastAt=0; heading.reset(); tiltX=swingX=0;
+    panCenter=0; recenterSteady=recentering=false; recenterCount=0;
+    pitchZeroActive=pitchZeroPending=false;
+  }
+  // Manual zero is immediate when the fused sensor sample is fresh. Reset
+  // the relative heading, not gyro bias, and preserve vertical fusion.
+  // Only a missing/invalid sample needs the ordinary stable-capture fallback.
+  void requestHorizontalCenter(uint32_t now) {
+    wakeRelative=true;originCandidate=false;
+    tiltX=swingX=0;recenterSteady=recentering=false;
+    if(seeded && lastGravityReliable && now-lastAt<=250) {
+      wakeCenter=horizontalAngleOfUp();heading.reset();panCenter=0;
+      originPending=false;recenteredAt=now;
+    } else {originPending=true;originWaiting=false;}
+  }
+  // Double tap: the current pose becomes dead ahead on BOTH axes until the
+  // next wake. Up/down is then measured from this pose, not from "flat" or
+  // "hanging", and keeps that zero when the pose crosses between the two.
+  void requestCenter(uint32_t now) {
+    requestHorizontalCenter(now);
+    tiltY=swingY=0;
+    if(seeded && lastGravityReliable && now-lastAt<=250) capturePitchZero();
+    else pitchZeroPending=true;
+  }
+  bool horizontalOriginReady() const { return wakeRelative && !originPending; }
+  float horizontalOriginDegrees() const { return wakeCenter / .017453293f; }
+  uint32_t horizontalRecenterCount() const { return recenterCount; }
+
   // Caller supplies enclosure trim; generic screen-frame fixtures use zero.
   void setHorizontalCenter(float tableDegrees, float hangingDegrees) {
     tableCenter = tableDegrees*.017453293f;
@@ -291,13 +323,16 @@ class WorldFollower {
   }
 
   void feed(const float a[3], const float g[3], float shakeStrength, uint32_t now,
-            const float headingGyro[3] = nullptr) {
+            const float headingGyro[3] = nullptr, bool allowRecenter = true) {
     const float dt = lastAt ? fminf(.1f, (now - lastAt) * .001f) : .025f;
     if (lastAt && now - lastAt > 250) {
       seeded = false;
       // Refresh gravity after missed reads, but keep the held heading through
-      // a brief sensor/render stall. A long sleep starts a new heading reference.
-      if (now-lastAt > 2000) heading.reset();
+      // a brief sensor/render stall. Wake-relative sessions reset only through
+      // beginWakeSession(); legacy callers still reset after a long gap.
+      if (now-lastAt > 2000 && !wakeRelative) heading.reset();
+      if (originPending) originCandidate=false;
+      recenterSteady=recentering=false;
     }
     lastAt = now;
     spun = weightless = false;
@@ -315,6 +350,8 @@ class WorldFollower {
     if (fabsf(turned) > SPIN_TURNS_FOR_DIZZY * 6.2831853f) { turned = 0; spun = true; }
 
     bool reliable = n > 7.5f && n < 12.0f;
+    lastGravityReliable=reliable;
+    if(!reliable) recenterSteady=recentering=false;
     if (!seeded) {
       if (!reliable) return;
       for (int i = 0; i < 3; ++i) up[i] = a[i] / n;
@@ -373,20 +410,55 @@ class WorldFollower {
     float pitchPlane = up[1]*up[1] + up[2]*up[2];
     // Keep the gravity reference's hemisphere beyond a side-on lean. An
     // unsigned denominator folded 90..180 degrees back toward centre.
-    float horizontalReference = wearPose ? hangingUpSign*up[1] : flatUpSign*up[2];
-    float horizontalAngle = atan2f(-up[0],copysignf(sqrtf(pitchPlane),horizontalReference));
-    float horizontalCenter = wearPose ? hangingCenter : tableCenter;
-    float gx = HORIZONTAL_GAZE_SIGN*gentleAngle(horizontalAngle+pan-horizontalCenter,
+    float horizontalAngle = horizontalAngleOfUp();
+    if (originPending) {
+      if (!originWaiting) {originWaiting=true;originWaitSince=now;}
+      // Use a brief quiet, valid gravity window, not the wake shake or a
+      // clipped/freefall sample. This never learns gyro bias from hand motion.
+      const float *originGyro=headingGyro ? headingGyro : g;
+      bool quiet=reliable && shakeStrength<2 && motion::len3(originGyro)<.20f;
+      bool capture=false;
+      if (!quiet) originCandidate=false;
+      else {
+        float unit[3]={a[0]/n,a[1]/n,a[2]/n};
+        float dot=unit[0]*originUp[0]+unit[1]*originUp[1]+unit[2]*originUp[2];
+        if (!originCandidate || dot<.9994f) {
+          for(int i=0;i<3;++i) originUp[i]=unit[i];
+          originCandidate=true; originSince=now; originSamples=1;
+        } else {
+          if(originSamples<255)++originSamples;
+          capture=now-originSince>=150 && originSamples>=3;
+        }
+      }
+      // A hand is rarely that still. Shortly after waking, once any wake
+      // shake has stopped, adopt the fused pose rather than leave left/right
+      // stuck at zero until the board happens to rest.
+      if (!capture && reliable && shakeStrength<2 && now-originWaitSince>=WAKE_ORIGIN_MAX_WAIT_MS)
+        capture=true;
+      if (capture) {
+        wakeCenter=horizontalAngle; originPending=originWaiting=false;
+        heading.reset();pan=panCenter=0;tiltX=swingX=0;
+        recenteredAt=now;recenterSteady=recentering=false;
+      }
+    }
+    if(horizontalOriginReady())
+      refreshHorizontalOrigin(a,n,headingGyro ? headingGyro : g,shakeStrength,now,horizontalAngle,pan,allowRecenter);
+    float horizontalCenter = wakeRelative ? wakeCenter : (wearPose ? hangingCenter : tableCenter);
+    float relativeAngle=horizontalAngle-horizontalCenter;
+    if(wakeRelative) relativeAngle=wrapAngle(relativeAngle);
+    float relativePan=wakeRelative ? wrapAngle(pan-panCenter) : pan;
+    float gx = originPending ? 0 : HORIZONTAL_GAZE_SIGN*gentleAngle(relativeAngle+relativePan,
                                                HORIZONTAL_GAZE_FULL_DEG,HORIZONTAL_GAZE_NEUTRAL_DEG);
-    // Project pitch relative to upright directly. Using |Y| prevents rolling
-    // left/right through a side-on pose from inventing a vertical 180° turn.
-    float pitch = wearPose ? atan2f(-copysignf(1.0f,neutralPitch)*flatUpSign*up[2],fabsf(up[1])) : pitchOf(up);
+    float pitch = postureVerticalAngle();
+    if (pitchZeroPending && reliable) capturePitchZero();
+    if (pitchZeroActive) pitch = pitchZeroSense*wrapAngle(continuousPitchOfUp()-pitchZero);
     float gy = gentleAngle(pitch,pitch > 0 ? DOWNWARD_GAZE_FULL_DEG : VERTICAL_GAZE_FULL_DEG);
     float confidence = fmaxf(0,fminf(1,(pitchPlane-.025f)/.175f));
     gy *= confidence*confidence*(3-2*confidence);
     if (transitioning) {
+      // A manual zero is continuous across the posture change: no fade.
       float blend = fminf(1,(now-poseChangedAt)/300.0f);
-      gy *= blend*blend*(3-2*blend);
+      if (!pitchZeroActive) gy *= blend*blend*(3-2*blend);
       if (blend >= 1) transitioning = false;
     }
     float k = 1 - expf(-dt / .065f);
@@ -411,10 +483,66 @@ class WorldFollower {
       sy = fmaxf(-5, fminf(5, pitchRate)) * SWING_GAZE*confidence*confidence*(3-2*confidence);
     }
     float sk = 1 - expf(-dt / .065f);
+    if(originPending) sx=0; // Keep the face centered while its wake pose settles.
     swingX += (fmaxf(-.6f, fminf(.6f, sx)) - swingX) * horizontalK;
     swingY += (fmaxf(-.6f, fminf(.6f, sy)) - swingY) * sk;
   }
  private:
+  float horizontalAngleOfUp() const {
+    float reference=wearPose ? hangingUpSign*up[1] : flatUpSign*up[2];
+    return atan2f(-up[0],copysignf(sqrtf(up[1]*up[1]+up[2]*up[2]),reference));
+  }
+  // Pitch from the current posture's neutral (flat or hanging upright).
+  // Using |Y| prevents rolling left/right through a side-on pose from
+  // inventing a vertical 180° turn.
+  float postureVerticalAngle() const {
+    return wearPose ? atan2f(-copysignf(1.0f,neutralPitch)*flatUpSign*up[2],fabsf(up[1])) : pitchOf(up);
+  }
+  // The same pitch on one scale for both postures: 0 = flat, +/-90° = hanging
+  // (sign by which edge is up). Table and hanging values agree where the
+  // posture switches, so a zero taken in one posture still holds in the other.
+  float continuousPitchOfUp() const {
+    if (!wearPose) return pitchOf(up);
+    return flatUpSign*hangingUpSign*(postureVerticalAngle()+1.57079633f);
+  }
+  void capturePitchZero() {
+    pitchZero=continuousPitchOfUp();
+    // Keep this posture's up/down sense, including an upside-down hang.
+    pitchZeroSense=wearPose ? flatUpSign*hangingUpSign : 1.0f;
+    pitchZeroActive=true;pitchZeroPending=false;
+  }
+  static float wrapAngle(float a) {
+    if(a>3.14159265f)a-=6.28318531f;
+    if(a<-3.14159265f)a+=6.28318531f;
+    return a;
+  }
+  void refreshHorizontalOrigin(const float a[3],float n,const float g[3],float shake,
+                               uint32_t now,float angle,float pan,bool allowed) {
+    bool quiet=allowed && n>8.8f && n<10.8f && shake<1 && motion::len3(g)<HORIZONTAL_RECENTER_GYRO_RAD_S;
+    float unit[3]={};
+    if(quiet)for(int i=0;i<3;++i)unit[i]=a[i]/n;
+    float dot=unit[0]*recenterUp[0]+unit[1]*recenterUp[1]+unit[2]*recenterUp[2];
+    if(!quiet) {recenterSteady=recentering=false;return;}
+    if(!recenterSteady || dot<.99985f) {
+      for(int i=0;i<3;++i)recenterUp[i]=unit[i];
+      recenterSince=now;recenterSteady=true;recentering=false;
+      return;
+    }
+    if(!recentering && now-recenteredAt>=HORIZONTAL_RECENTER_INTERVAL_MS &&
+       now-recenterSince>=HORIZONTAL_RECENTER_STILL_MS) {
+      recenterFrom=wakeCenter;recenterPanFrom=panCenter;
+      recenterTarget=angle;recenterPanTarget=pan;
+      recenterAt=recenteredAt=now;recentering=true;
+    }
+    if(!recentering)return;
+    float t=fminf(1,(now-recenterAt)/float(HORIZONTAL_RECENTER_BLEND_MS));
+    float blend=t*t*(3-2*t);
+    // Move only the reference. Do not reset the heading integrator or eye
+    // springs: visible gaze eases smoothly and deliberate motion cancels it.
+    wakeCenter=wrapAngle(recenterFrom+wrapAngle(recenterTarget-recenterFrom)*blend);
+    panCenter=wrapAngle(recenterPanFrom+wrapAngle(recenterPanTarget-recenterPanFrom)*blend);
+    if(t>=1) {recentering=false;recenteredAt=now;++recenterCount;}
+  }
   // A horizontal roll may reverse Z without any vertical tilt. Using its
   // magnitude avoids a fabricated +/-180-degree vertical gaze at that point.
   float pitchOf(const float v[3]) const { return atan2f(flatUpSign*v[1],fabsf(v[2])); }
@@ -423,6 +551,17 @@ class WorldFollower {
     float magnitude = fmaxf(0,fabsf(radians)-dead);
     return copysignf(fminf(1,magnitude/fmaxf(.01f,fullDegrees*.017453293f-dead)),radians);
   }
+  bool wakeRelative=false,originPending=false,originCandidate=false,lastGravityReliable=false;
+  bool pitchZeroActive=false,pitchZeroPending=false,originWaiting=false;
+  float pitchZero=0,pitchZeroSense=1;
+  float wakeCenter=0,originUp[3]={};
+  uint32_t originSince=0,originWaitSince=0;
+  uint8_t originSamples=0;
+  bool recenterSteady=false,recentering=false;
+  float panCenter=0,recenterUp[3]={};
+  float recenterFrom=0,recenterTarget=0,recenterPanFrom=0,recenterPanTarget=0;
+  uint32_t recenterSince=0,recenteredAt=0,recenterAt=0,recenterCount=0;
+
   MotionHeading heading;
   float up[3] = {0,0,-1}, neutralPitch = 0, turned = 0;
   float tableCenter = 0, hangingCenter = 0;

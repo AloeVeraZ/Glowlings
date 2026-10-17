@@ -29,39 +29,50 @@
 #include "DEV_Config.h"
 #include "FaceLog.h"
 
-uint slice_num;
-SPIClass * vspi = NULL;
-/**
- * GPIO read and write
- **/
+// The panel is write-only and its chip select stays low, so the IDF SPI
+// master drives it directly. Frames go out by DMA: the CPU sleeps while the
+// pixels stream instead of feeding the SPI FIFO 64 bytes at a time.
+static spi_device_handle_t lcdSpi = nullptr;
 void DEV_Digital_Write(uint16_t Pin, uint8_t Value)
 {
     digitalWrite(Pin, Value);
 }
 
-uint8_t DEV_Digital_Read(uint16_t Pin)
-{
-    return digitalRead(Pin);
-}
-
-/**
- * SPI
- **/
 void DEV_SPI_WriteByte(uint8_t Value)
 {
-    vspi->transfer(Value);
+    spi_transaction_t t = {};
+    t.length = 8;
+    t.flags = SPI_TRANS_USE_TXDATA;
+    t.tx_data[0] = Value;
+    spi_device_polling_transmit(lcdSpi, &t);
 }
 
 void DEV_SPI_Write_nByte(uint8_t pData[], uint32_t Len)
 {
-     // The LCD only consumes these bytes. transfer() also receives into the
-     // same buffer, overwriting the rendered pixels and adding readback work.
-     vspi->writeBytes(pData, Len);
+    // One SPI transaction carries at most 32 KB on the ESP32-S3, so queue the
+    // band in chunks back to back, then sleep until the last one is out.
+    static spi_transaction_t chunks[LCD_SPI_QUEUE];
+    int queued = 0;
+    esp_err_t err = ESP_OK;
+    while (Len && queued < LCD_SPI_QUEUE && err == ESP_OK) {
+        uint32_t n = Len < LCD_SPI_CHUNK_BYTES ? Len : LCD_SPI_CHUNK_BYTES;
+        spi_transaction_t &t = chunks[queued];
+        t = {};
+        t.length = n * 8;
+        t.tx_buffer = pData;
+        err = spi_device_queue_trans(lcdSpi, &t, portMAX_DELAY);
+        if (err == ESP_OK) { ++queued; pData += n; Len -= n; }
+    }
+    for (int i = 0; i < queued; ++i) {
+        spi_transaction_t *done;
+        spi_device_get_trans_result(lcdSpi, &done, portMAX_DELAY);
+    }
+    static bool reported = false;
+    if ((err != ESP_OK || Len) && !reported) {
+        reported = true;
+        FACE_LOG(printf, "LCD DMA transfer failed (%d, %lu bytes left)\n", int(err), (unsigned long)Len);
+    }
 }
-
-/**
- * I2C
- **/
 
 void DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value)
 {
@@ -69,55 +80,6 @@ void DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value)
     Wire.write(reg);
     Wire.write(Value);
     Wire.endTransmission();
-}
-
-void DEV_I2C_Write_Register(uint8_t addr, uint8_t reg, uint16_t value)
-{
-    uint8_t tmpi[3];
-    tmpi[0] = reg;
-    tmpi[1] = (value >> 8) & 0xFF;
-    tmpi[2] = value & 0xFF;
-    Wire.beginTransmission(addr);
-    Wire.write(tmpi,3);
-    Wire.endTransmission();
-    
-}
-
-void DEV_I2C_Write_nByte(uint8_t addr,uint8_t *pData, uint32_t Len)
-{
-    Wire.beginTransmission(addr);
-    Wire.write(pData,Len);
-    Wire.endTransmission();
-}
-
-uint8_t DEV_I2C_Read_Byte(uint8_t addr, uint8_t reg)
-{
-    uint8_t value;
-  
-    Wire.beginTransmission(addr);
-    Wire.write((byte)reg);
-    Wire.endTransmission();
-  
-    Wire.requestFrom(addr, (byte)1);
-    value = Wire.read();
-  
-    return value;
-}
-void DEV_I2C_Read_Register(uint8_t addr, uint8_t reg, uint16_t *value)
-{
-    uint8_t tmpi[2];
-    
-    Wire.beginTransmission(addr);
-    Wire.write(reg);
-    // Wire.endTransmission();
-    Wire.requestFrom(addr, 2);
-  
-    uint8_t i = 0;
-    for(i = 0; i < 2; i++) {
-      tmpi[i] =  Wire.read();
-    }
-    Wire.endTransmission();
-    *value = (((uint16_t)tmpi[0] << 8) | (uint16_t)tmpi[1]);
 }
 
 void DEV_I2C_Read_nByte(uint8_t addr, uint8_t reg, uint8_t *pData, uint32_t Len)
@@ -135,16 +97,6 @@ void DEV_I2C_Read_nByte(uint8_t addr, uint8_t reg, uint8_t *pData, uint32_t Len)
     Wire.endTransmission();
 }
 
-uint16_t DEC_ADC_Read(void)
-{
-  return analogReadMilliVolts(BAT_ADC_PIN);
-    // return analogRead(BAR_CHANNEL);
-  // return 0;
-}
-
-/**
- * GPIO Mode
- **/
 void DEV_GPIO_Mode(uint16_t Pin, uint16_t Mode)
 {
 
@@ -158,19 +110,9 @@ void DEV_GPIO_Mode(uint16_t Pin, uint16_t Mode)
     }
 }
 
-/**
- * KEY Config
- **/
-void DEV_KEY_Config(uint16_t Pin)
-{
-    pinMode(Pin,INPUT_PULLUP);
-}
-/*
-** PWM
-*/
 void DEV_SET_PWM(uint8_t Value)
 {
-    if (Value < 0 || Value > 100)
+    if (Value > 100)
     {
         FACE_LOG(printf, "DEV_SET_PWM Error \r\n");
     }
@@ -180,17 +122,9 @@ void DEV_SET_PWM(uint8_t Value)
     }
 }
 
-/**
- * delay x ms
- **/
 void DEV_Delay_ms(uint32_t xms)
 {
     delay(xms);
-}
-
-void DEV_Delay_us(uint32_t xus)
-{
-    delayMicroseconds(xus);
 }
 
 void DEV_GPIO_Init(void)
@@ -201,34 +135,36 @@ void DEV_GPIO_Init(void)
     DEV_GPIO_Mode(LCD_CS_PIN, 1);
     DEV_GPIO_Mode(LCD_BL_PIN, 1);
     DEV_GPIO_Mode(Touch_RST_PIN, 1);
-    //ADC
-//    DEV_GPIO_Mode(BAT_ADC_PIN,0);
-    // analogReadResolution(12);
-    
     DEV_Digital_Write(LCD_CS_PIN, 1);
     DEV_Digital_Write(LCD_DC_PIN, 0);
     // PWM Config
-    // DEV_SET_PWM(0);
     DEV_Digital_Write(LCD_BL_PIN, 0);
 }
 
-
-/******************************************************************************
-function:	Module Initialize, the library and initialize the pins, SPI protocol
-parameter:
-Info:
-******************************************************************************/
 uint8_t DEV_Module_Init(void)
 {
-    Serial.begin(115200);
     DEV_Delay_ms(100);
     // GPIO Config
     DEV_GPIO_Init();
     // SPI Config
-    vspi = new SPIClass(VSPI);
-    vspi->begin(LCD_CLK_PIN, LCD_MISO_PIN, LCD_MOSI_PIN, LCD_CS_PIN); //SCLK, MISO, MOSI, SS
-    pinMode(vspi->pinSS(), OUTPUT); //VSPI SS
-    vspi->beginTransaction(SPISettings(80000000, MSBFIRST, SPI_MODE0));
+    if (!lcdSpi) {  // the bus survives a re-init within one boot
+        spi_bus_config_t bus = {};
+        bus.mosi_io_num = LCD_MOSI_PIN;
+        bus.miso_io_num = -1;
+        bus.sclk_io_num = LCD_CLK_PIN;
+        bus.quadwp_io_num = -1;
+        bus.quadhd_io_num = -1;
+        bus.max_transfer_sz = LCD_SPI_MAX_BYTES;
+        spi_device_interface_config_t dev = {};
+        dev.clock_speed_hz = 80000000;
+        dev.mode = 0;
+        dev.spics_io_num = -1;  // CS is held low by the panel driver
+        dev.queue_size = LCD_SPI_QUEUE;
+        dev.flags = SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY;
+        if (spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO) != ESP_OK ||
+            spi_bus_add_device(SPI2_HOST, &dev, &lcdSpi) != ESP_OK)
+            FACE_LOG(println, "LCD SPI setup failed");
+    }
     
     // I2C Config
     Wire.setPins(DEV_SDA_PIN, DEV_SCL_PIN);
@@ -236,15 +172,4 @@ uint8_t DEV_Module_Init(void)
     Wire.begin();
     FACE_LOG(printf, "DEV_Module_Init OK \r\n");
     return 0;
-}
-
-/******************************************************************************
-function:	Module exits, closes SPI and BCM2835 library
-parameter:
-Info:
-******************************************************************************/
-void DEV_Module_Exit(void)
-{
-  vspi->end();
-  Wire.end();
 }

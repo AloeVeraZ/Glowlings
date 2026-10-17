@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <vector>
 #include "InteractionPolicy.h"
 #include "ChargeFlow.h"
 #include "palette.h"
@@ -59,8 +60,38 @@ int main() {
  run(4200);CHECK(!c.finishingCharge());run(3000);CHECK(renderer.getEyeColor()==EYE_COLOR);
  eyes.draw();for(int y=205;y<SCREEN_HEIGHT;++y) for(int x=0;x<SCREEN_WIDTH;++x) CHECK(fb[y*SCREEN_WIDTH+x]==0);
  c.setAlwaysOn(true,now);CHECK(c.alwaysOnEnabled() && c.mood()==Mood::ALWAYS_ON);run(2000);eyes.draw();
- int badge=0;for(int y=205;y<225;++y) for(int x=90;x<150;++x) badge+=fb[y*SCREEN_WIDTH+x]!=0;
- CHECK(badge>20);
+ // Toggling the renderer on the same geometry changes only black pupil pixels.
+ renderer.setAwakeMode(false,0);renderer.compose(eyes.frames());
+ std::vector<uint16_t> unmarked(fb,fb+SCREEN_WIDTH*SCREEN_HEIGHT);
+ renderer.setAwakeMode(true,0);renderer.compose(eyes.frames());
+ int marks[2]={0,0},changed=0;
+ for(int y=0;y<SCREEN_HEIGHT;++y) for(int x=0;x<SCREEN_WIDTH;++x) {
+   int pixel=y*SCREEN_WIDTH+x;if(fb[pixel]==unmarked[pixel])continue;
+   ++changed;CHECK(unmarked[pixel]==PIXEL_BACKGROUND);
+   bool inside=false;
+   for(int i=0;i<2;++i) {
+     const EyeFrame &f=eyes.frames()[i];
+     float dx=(x-f.cx-f.pupilX)/f.pupilSX,dy=(y-f.cy-f.pupilY)/f.pupilSY;
+     if(dx*dx+dy*dy<f.pupilR*f.pupilR){inside=true;++marks[i];} // starfall stays inside the black pupil
+   }
+   CHECK(inside);CHECK(y<205);
+ }
+ CHECK(changed>12 && marks[0]>6 && marks[1]>6);
+ // A shut eye, heart pupil or dizzy spiral must be identical to mode-off.
+ EyeFrame hidden[2]={eyes.frames()[0],eyes.frames()[1]};
+ for(int variant=0;variant<3;++variant) {
+   for(int i=0;i<2;++i) {
+     hidden[i]=eyes.frames()[i];
+     if(variant==0) {hidden[i].topA=hidden[i].botA=0;hidden[i].topB=hidden[i].botB=hidden[i].topC=hidden[i].botC=0;}
+     if(variant==1)hidden[i].heart=1;
+     if(variant==2)hidden[i].spiral=1;
+   }
+   renderer.setAwakeMode(false,0);renderer.compose(hidden);
+   std::vector<uint16_t> baseline(fb,fb+SCREEN_WIDTH*SCREEN_HEIGHT);
+   renderer.setAwakeMode(true,0);renderer.compose(hidden);
+   CHECK(memcmp(fb,baseline.data(),sizeof(fb))==0);
+ }
+ renderer.setAwakeMode(true,0);renderer.compose(eyes.frames());
  for(uint16_t px:fb) CHECK(inPalette(px,renderer.getEyeColor()));
  c.setAlwaysOn(false,now);CHECK(!c.alwaysOnEnabled() && c.mood()==Mood::AUTO_SLEEP);run(2000);eyes.draw();
  for(int y=205;y<225;++y) for(int x=90;x<150;++x) CHECK(fb[y*SCREEN_WIDTH+x]==0);

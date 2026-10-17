@@ -2,6 +2,7 @@
 #include <math.h>
 #include "CreatureAnimator.h"
 #include "MotionGestures.h"
+#include "gaze_expect.h"
 #include "palette.h"
 
 #define CHECK(x) do { if (!(x)) { printf("FAIL line %d: %s\n", __LINE__, #x); ++fails; } } while (0)
@@ -101,7 +102,7 @@ int main() {
     const float flat[3] = {0,0,-9.81f}, tilted[3] = {-4.146f,0,-8.891f}, quiet[3] = {};
     for (int t = 1; t <= 201; t += period) world.feed(flat, quiet, 0, t);
     for (int elapsed = period; elapsed <= 150; elapsed += period) world.feed(tilted, quiet, 0, 201 + elapsed);
-    CHECK(world.tiltX < -.68f); // obvious direction change visible within 150 ms
+    CHECK(fabsf(world.tiltX + expectedHorizontalGaze(25)) < .10f); // visible within 150 ms, allowing fusion lag
     if (period == 10) firstTilt = world.tiltX;
     else CHECK(fabsf(world.tiltX - firstTilt) < .05f); // independent of display frame rate
     CHECK(world.motionLevel == 0); // a quiet orientation does not imply continuing movement

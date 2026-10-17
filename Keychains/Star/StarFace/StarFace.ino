@@ -29,7 +29,7 @@
 //
 // The eyes can also be driven directly from anywhere in the sketch:
 //   eyes.setExpression(HAPPY);   eyes.lookAt(0.5f, -0.3f);   eyes.blink();
-uint16_t *BlackImage = nullptr; // Required by Waveshare's LCD_1in28.cpp.
+static uint16_t *framebuffer = nullptr;
 CST816S touch(6, 7, 13, 5);
 EyeRenderer renderer;
 Eyes eyes;
@@ -37,7 +37,9 @@ CreatureAnimator creature;
 
 static constexpr int W = SCREEN_WIDTH, H = SCREEN_HEIGHT;
 static_assert(W == LCD_1IN28_WIDTH && H == LCD_1IN28_HEIGHT, "FaceConfig.h screen size must match the panel");
-static constexpr uint32_t FRAME_US = 16667;      // frame cap (~60 FPS); render time sets the real rate
+// 20 FPS: what the renderer achieved anyway. The cap turns render-time
+// savings into idle (cooler) CPU time instead of extra frames.
+static constexpr uint32_t FRAME_US = 50000;
 static constexpr uint32_t NAP_FRAME_US = 33333;  // 30 FPS is plenty while the eyes are shut
 static constexpr float MAX_FRAME_DT = .12f;      // cover real frame intervals; spring integration sub-steps
 static constexpr bool LOG_FPS = false;           // print frames per second over serial
@@ -60,21 +62,19 @@ static constexpr uint8_t WOM_THRESHOLD_MG = 200;
 static constexpr int IMU_WAKE_PIN = 3;    // QMI8658 INT2, active low in WoM
 static constexpr int TOUCH_WAKE_PIN = 5;  // CST816S IRQ, active-low touch pulse
 
-uint32_t lastActivity = 0, lastFrameUs = 0;
+uint32_t lastActivity = 0, lastFrameUs = 0, lastHandledAt = 0;
 bool sleepPreparing = false, deepSleepPlanned = false;
 bool imuReady = false, wokeByShake = false;
 AwakeLimit awakeLimit;
 LeftRightWakeCheck sleepingShake;
 float tiltX = 0, tiltY = 0;
+WorldFollower gazeWorld;
 float linX = 0, linY = 0; // smoothed gravity-free acceleration
 TouchTracker finger;
 uint32_t lastTouchActionAt = 0, lastSwipeAt = 0;
 uint32_t sleepRetryAt = 0, lastBatteryCheck = 0;
-uint8_t tapStreak = 0;
-uint32_t lastTapAt = 0;
 ScreenTapRun screenTaps;
 AlwaysOnGesture alwaysOnGesture;
-float dieTempC = 25.0f, batteryVolts = 0;
 int batteryPercent = -1;
 BatterySupply batterySupply;
 Preferences batteryMemory;
@@ -83,7 +83,7 @@ int savedBatteryPercent = -1;
 bool savedCharging = false;
 bool savedGaugeValid = false;
 uint32_t lastBatterySave = 0;
-uint32_t lastTempRead = 0, coldSince = 0, lastColdReaction = 0;
+uint32_t lastTempRead = 0, coldSince = 0;
 
 TwistDetector activeTwist;
 ShakeDetector shaker;
@@ -159,7 +159,15 @@ bool reactMotion(Mood m, uint32_t now, uint32_t duration = 900) {
   return react(m, now, duration, false);
 }
 
+void startGazeSession() {
+  gazeWorld.beginWakeSession();
+  tiltX=0;
+  creature.setTilt(0,tiltY);
+  creature.setSwing(0,gazeWorld.swingY);
+}
+
 void startWakeAnimation(uint32_t now, bool fromShake, bool touched = false) {
+  startGazeSession();
   awakeLimit.start(now);
   sleepingShake = LeftRightWakeCheck();
   sleepPreparing = false;
@@ -256,7 +264,8 @@ void handleBatterySerial() {
         bool newlyConnected = !batterySupply.charging;
         batterySupply.confirmUsbPower();
         creature.setBatteryLevel(batterySupply.percent, true);
-        cancelClosingForCharge(awakeLimit, creature, sleepPreparing, deepSleepPlanned, newlyConnected, millis());
+        if(cancelClosingForCharge(awakeLimit, creature, sleepPreparing, deepSleepPlanned, newlyConnected, millis()))
+          startGazeSession();
         retainedBatteryGauge = batterySupply.snapshot();
         persistBatteryMemory(true);
         FACE_LOG(printf, "USB power confirmed by host; estimate retained at %d%%\n", batterySupply.percent);
@@ -283,11 +292,11 @@ void readBattery() {
   uint32_t checkMs = BATTERY_LIVE_POWER_CHECK_MS;
   batterySupply.sample(volts, sampledNow, checkMs);
   handleBatterySerial();
-  batteryVolts = batterySupply.volts;
   batteryPercent = batterySupply.percent;
   creature.setBatteryLevel(batteryPercent, batterySupply.charging);
   if (cancelClosingForCharge(awakeLimit, creature, sleepPreparing, deepSleepPlanned,
                             !wasCharging && batterySupply.charging, sampledNow)) {
+    startGazeSession();
     lastActivity = sampledNow;
     FACE_LOG(println, "Plug-in canceled closing; charging wake animation");
   }
@@ -338,16 +347,14 @@ void pointAt(int x, int y, uint32_t now) {
 // One tap (or knock) in a run: 1 boop, 2 surprise, 3/4 a brief angry huff.
 void tapReaction(int streak, int x, int y, uint32_t now, bool fromTouch = true) {
   pointAt(x, y, now);
-  tapStreak = streak;
-  if (react(tapMood(tapStreak), now, tapStreak >= 3 ? ANGRY_ANIM_MS : tapStreak == 2 ? 1050 : 900, fromTouch)
-      && fromTouch && tapStreak == 1) creature.queue(Mood::GIGGLE,now+900,1600);
+  if (react(tapMood(streak), now, streak >= 3 ? ANGRY_ANIM_MS : streak == 2 ? 1050 : 900, fromTouch)
+      && fromTouch && streak == 1) creature.queue(Mood::GIGGLE,now+900,1600);
 }
 
 void finishTap(int x, int y, uint32_t now) {
   if (now - lastTouchActionAt < 75) return;
   lastTouchActionAt = now;
   int streak = screenTaps.add(now);
-  lastTapAt = now;
   if (streak == TOUCH_BATTERY_TAPS) {
     readBattery();
     showBatteryLevel(batteryPercent);
@@ -356,6 +363,13 @@ void finishTap(int x, int y, uint32_t now) {
     return;
   }
   if (creature.batteryDisplayActive(now) || creature.touchAngerPauseActive(now)) return;
+  if (streak <= 2 && alwaysOnGesture.doubleTapped) {
+    tapReaction(2, x, y, now);
+    // Rebase after the reaction's pointer setup, preserving the double-tap
+    // choreography without leaving a stale finger target behind.
+    centerAfterTouch(now);
+    return;
+  }
   if (streak == 5) {
     recordActivity(now);
     sleepPreparing = false;
@@ -376,6 +390,13 @@ void finishHold(const TouchTracker::Result &r, uint32_t now) {
   } else if (r.heldMs < HOLD_ANGER_START_MS) {
     react(Mood::PETTED, now, 1100); // a short, gentle press feels nice
   }
+}
+
+void centerAfterTouch(uint32_t now) {
+  if(batteryLow())return;
+  gazeWorld.requestCenter(now);tiltX=tiltY=0;
+  creature.centerGaze(now);
+  FACE_LOG(println,"Double tap: current orientation is the new zero (left/right and up/down)");
 }
 
 void toggleAlwaysOn(uint32_t now) {
@@ -424,6 +445,7 @@ void handleTouch(uint32_t now) {
     }
   }
   if (creature.touchAngerPauseActive(now)) {
+    alwaysOnGesture=AlwaysOnGesture();
     // Keep counting distinct taps so the same run can reach ten. Pointer and
     // other reactions stay paused; touches still renew the inactivity timer.
     if (touched) {
@@ -462,7 +484,8 @@ void handleTouch(uint32_t now) {
     if (r.kind == TouchTracker::NONE) r = finger.poll(now); // a lift report can go missing
     if (touchStuck && !finger.down) touchStuck = false;
   }
-  bool modeConsumed=alwaysOnGesture.feed(r,now,!creature.batteryDisplayActive(now));
+  bool allowed=!creature.batteryDisplayActive(now);
+  bool modeConsumed=alwaysOnGesture.feed(r,now,allowed);
   if(alwaysOnGesture.poll(finger.tracking(),now)) toggleAlwaysOn(now);
   if(modeConsumed || alwaysOnGesture.reserved()) {
     creature.setPointerHeld(false,now);
@@ -577,11 +600,8 @@ void printRawImu(uint32_t now) {
                 int(rawG[0]), int(rawG[1]), int(rawG[2]));
 }
 
-// Waveshare's QMI8658_config_acc() builds the accelerometer's low-pass
-// setting and then writes CTRL5 = 0, leaving it off: a knock is then a spike
-// of a millisecond or two that sampling easily misses. Turn the filter on
-// (~54 Hz: mode 2 at 1 kHz, well above any shake or step) next to the
-// gyro's, without changing the driver.
+// Enable the measured ~54 Hz accelerometer filter after normal IMU startup.
+// This makes brief knocks visible at the fast sampler's actual read rate.
 void tuneImuFilters() {
   uint8_t ctrl5 = 0;
   QMI8658_read_reg(QMI8658Register_Ctrl5, &ctrl5, 1);
@@ -727,6 +747,9 @@ void handleSurroundings(const float a[3], const float g[3], bool heldStill, uint
   uint32_t stillFor = stillSince ? now - stillSince : 0;
   stillSince = heldStill ? (stillSince ? stillSince : now) : 0;
   creature.setStillFor(stillFor);   // lying still for long: bored, then sleepy
+  // Picked up or turned to look at it (not just bobbing along while walking):
+  // ends the always-on power saver.
+  if (!steps.walking && (jolt > PICKUP_MS2 || gazeWorld.motionLevel > .25f)) lastHandledAt = now;
 
   // Carried around: footsteps bob the eyes and it watches the world go by.
   steps.feed(a, shaker.strength, now);
@@ -850,7 +873,7 @@ void handleKnocks(uint32_t now) {
 // around, tossing it or bumping it get their own reactions. a and g are in the
 // canonical gesture frame; both receive the same visual rotation below.
 void followWorld(const float a[3], const float g[3], uint32_t now, bool allowReactions = true) {
-  static WorldFollower world;
+  WorldFollower &world=gazeWorld;
   float visualA[3] = {a[0],a[1],a[2]}, visualG[3] = {g[0]-gazeGyroBias[0],g[1]-gazeGyroBias[1],g[2]-gazeGyroBias[2]};
   const float *headingBias = gazeGyroBiasValid ? gazeGyroBias : HORIZONTAL_GYRO_BIAS_RAD_S;
   float visualHeadingG[3] = {g[0]-headingBias[0],g[1]-headingBias[1],g[2]-headingBias[2]};
@@ -859,7 +882,16 @@ void followWorld(const float a[3], const float g[3], uint32_t now, bool allowRea
   rotateMotionXY(visualHeadingG, GAZE_IMU_ROTATION);
   world.setFlatUpSign(gazeFlatUpSign);
   world.setHorizontalCenter(HORIZONTAL_TABLE_CENTER_DEG, HORIZONTAL_HANGING_CENTER_DEG);
-  world.feed(visualA, visualG, shaker.strength, now, visualHeadingG);
+  bool hadOrigin=world.horizontalOriginReady();
+  uint32_t recenters=world.horizontalRecenterCount();
+  bool allowRecenter=!sleepPreparing && !finger.tracking() && !steps.walking;
+  world.feed(visualA, visualG, shaker.strength, now, visualHeadingG,allowRecenter);
+  if(world.horizontalRecenterCount()!=recenters) {
+    if(allowReactions && !sleepPreparing)creature.showRecenter(now);
+    FACE_LOG(println,"Periodic gaze recenter completed after steady hold");
+  }
+  if(!hadOrigin && world.horizontalOriginReady())
+    FACE_LOG(printf,"Wake gaze center captured: %.1f degrees (horizontal)\n",world.horizontalOriginDegrees());
   static int lastGazePosture = -1;
   int posture = world.uprightReferenceActive() ? 1 : 0;
   if (LOG_SHAKE && posture != lastGazePosture) {
@@ -922,7 +954,7 @@ void handleMotion(uint32_t now) {
     return;
   }
   handleKnocks(now);
-  if (activeTwist.feed(g, now) && TWIST_MAKES_DIZZY) {
+  if (TWIST_MAKES_DIZZY && activeTwist.feed(g, now)) {
     impactFromMotion(linX, linY);
     reactMotion(Mood::DIZZY, now, DIZZY_ANIM_MS); // tumbles, then glares
   }
@@ -944,8 +976,7 @@ void handleMotion(uint32_t now) {
   bool heldStill = fabsf(accelLength - 9.81f) < .85f &&
                    fabsf(g[0]) + fabsf(g[1]) + fabsf(g[2]) < .45f;
   handleSurroundings(a, g, heldStill, now);
-  // A face-down pause produces a puzzled, asymmetric expression; left face
-  // down, it goes to sleep (a way to switch it off without the touch screen).
+  // A face-down pause produces a puzzled, asymmetric expression.
   static uint32_t faceDownSince = 0;
   static bool faceDownReacted = false;
   if (a[2] * gazeFlatUpSign < -8.5f && fabsf(g[0]) + fabsf(g[1]) < 1.2f) {
@@ -953,11 +984,6 @@ void handleMotion(uint32_t now) {
     if (!faceDownReacted && now - faceDownSince > 500) {
       reactMotion(Mood::SASSY, now, 1500);
       faceDownReacted = true;
-    }
-    if (FACE_DOWN_SLEEP_MS && !sleepPreparing && !finger.down &&
-        now - lastActivity >= FACE_DOWN_SLEEP_MS && now - faceDownSince > FACE_DOWN_SLEEP_MS) {
-      if (LOG_SHAKE) FACE_LOG(println, "motion: face down, going to sleep");
-      startSleepAnimation(now);
     }
   } else {
     faceDownSince = 0;
@@ -1014,6 +1040,7 @@ void handleMotion(uint32_t now) {
 void handleTemperature(uint32_t now) {
   if (!imuReady || sleepPreparing || now-lastTempRead < 1000) return;
   lastTempRead=now;
+  float dieTempC;
   { I2CGuard bus; dieTempC=QMI8658_readTemp(); }
   if (dieTempC < -30 || dieTempC > 90) return;
   static bool coldReacted=false,hotReacted=false;
@@ -1158,11 +1185,9 @@ bool configureImuSync(bool enabled) {
 
 bool armMotionWake() {
   if (imuSyncEnabled) configureImuSync(false);
-  // The bundled Waveshare WoM helper never sends CTRL9 and uses INT1.
-  // This board connects INT2 to RTC-capable GPIO3.
+  // Route wake-on-motion to this board's RTC-capable INT2/GPIO3 input.
   QMI8658_enableSensors(QMI8658_CTRL7_DISABLE_ALL);
-  QMI8658_config_acc(QMI8658AccRange_2g, QMI8658AccOdr_LowPower_21Hz,
-                     QMI8658Lpf_Disable, QMI8658St_Disable);
+  QMI8658_config_acc(QMI8658AccRange_2g, QMI8658AccOdr_LowPower_21Hz);
   QMI8658_write_reg(QMI8658Register_Ctrl8, 0x80); // route CTRL9 done to STATUSINT bit 7
   QMI8658_write_reg(QMI8658Register_Cal1_L, WOM_THRESHOLD_MG);
   QMI8658_write_reg(QMI8658Register_Cal1_H, 0xC0 | 4); // INT2 idle high, 4-sample blanking
@@ -1367,17 +1392,31 @@ bool confirmMotionWake(bool &touchConfirmed) {
   return false;
 }
 
+// Always-on with nobody touching or handling it (on a desk, in a bag).
+bool alwaysOnResting(uint32_t now) {
+  return awakeLimit.alwaysOn && !sleepPreparing && !batteryLow() && !finger.tracking() &&
+         !creature.batteryDisplayActive(now) &&
+         now - lastActivity >= ALWAYS_ON_REST_MS && now - lastHandledAt >= ALWAYS_ON_REST_MS;
+}
+
 void renderFrame() {
   uint32_t nowUs = micros();
   bool napping = sleepPreparing && creature.sleepFinished(millis());
-  if (nowUs - lastFrameUs < (napping ? NAP_FRAME_US : FRAME_US)) return;
+  bool resting = alwaysOnResting(millis());
+  // Rendering is what keeps the CPU busy (and warm): rest at a low rate.
+  uint32_t interval = napping ? NAP_FRAME_US : resting ? ALWAYS_ON_REST_FRAME_US : FRAME_US;
+  if (nowUs - lastFrameUs < interval) return;
   // Frame-independent animation: everything advances by real elapsed time.
   float dt = (nowUs - lastFrameUs) / 1000000.0f;
   lastFrameUs = nowUs;
   if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
   creature.update(dt, millis());
   eyes.draw();
-  applyBacklight(creature.backlight());
+  // Ease into the dimmer resting backlight; come back up quickly.
+  static float restLevel = 1;
+  float restTarget = resting ? ALWAYS_ON_REST_BACKLIGHT : 1.0f;
+  restLevel += (restTarget - restLevel) * (1 - expf(-dt / (resting ? .8f : .12f)));
+  applyBacklight(creature.backlight() * restLevel);
   if (LOG_FPS) {
     static uint32_t frames = 0, windowStart = 0;
     ++frames;
@@ -1449,10 +1488,12 @@ void setup() {
   }
   // Internal RAM is much faster than PSRAM for per-pixel blending.
   size_t bytes = W * H * sizeof(uint16_t);
-  BlackImage = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  if (!BlackImage) BlackImage = (uint16_t *)ps_malloc(bytes);
-  if (!BlackImage) BlackImage = (uint16_t *)malloc(bytes);
-  if (!BlackImage) { FACE_LOG(println, "Display buffer allocation failed"); return; }
+  // DMA-capable too, so frames stream to the panel without a bounce copy.
+  framebuffer = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  if (!framebuffer) framebuffer = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!framebuffer) framebuffer = (uint16_t *)ps_malloc(bytes);
+  if (!framebuffer) framebuffer = (uint16_t *)malloc(bytes);
+  if (!framebuffer) { FACE_LOG(println, "Display buffer allocation failed"); return; }
   DEV_Module_Init();
   DEV_SET_PWM(0);
   LCD_1IN28_Init(HORIZONTAL);
@@ -1469,7 +1510,7 @@ void setup() {
   uint64_t mac = ESP.getEfuseMac();
   uint32_t unitSeed = uint32_t(mac ^ (mac >> 32)); // small per-unit quirks in the idle motion
   lastActivity = millis();
-  renderer.begin(BlackImage, LCD_1IN28_DisplayWindows);
+  renderer.begin(framebuffer, LCD_1IN28_DisplayWindows);
   eyes.begin(&renderer, unitSeed, lastActivity);
   creature.begin(&eyes, unitSeed, lastActivity);
   readBattery();
@@ -1490,7 +1531,7 @@ void setup() {
 void loop() {
   handleBatterySerial();
   printRawImu(millis());
-  if (!BlackImage) { delay(1000); return; }
+  if (!framebuffer) { delay(1000); return; }
   uint32_t now = millis();
   uint32_t powerCheckMs = BATTERY_LIVE_POWER_CHECK_MS;
   if (now - lastBatteryCheck >= powerCheckMs) {
@@ -1533,13 +1574,7 @@ void loop() {
     cancelSleepForTouch(now);
   creature.setPointerHeld(finger.tracking() && !touchStuck && !alwaysOnGesture.reserved(), now);
   uint32_t timeout = idleTimeout();
-  if (sleepPreparing) {
-    // Napping keeps the screen on. Only planned deep sleep or a nearly empty
-    // battery actually switches it off.
-    if (creature.sleepFinished(now) && deepSleepPlanned && int32_t(now - sleepRetryAt) >= 0) {
-      if (enterDeepSleep(true)) return;
-    }
-  } else if (!RAW_IMU_SERIAL_ONLY && !awakeLimit.alwaysOn && int32_t(now - sleepRetryAt) >= 0 &&
+  if (!sleepPreparing && !RAW_IMU_SERIAL_ONLY && !awakeLimit.alwaysOn && int32_t(now - sleepRetryAt) >= 0 &&
              (AUTO_DEEP_SLEEP ? awakeLimit.closingDue(now) : now - lastActivity >= sleepAnimationDelay(timeout))) {
     startSleepAnimation(AUTO_DEEP_SLEEP ? awakeLimit.closingAt() : now);
   }

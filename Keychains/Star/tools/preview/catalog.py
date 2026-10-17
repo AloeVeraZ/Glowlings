@@ -14,6 +14,8 @@ parser.add_argument("frames",type=Path)
 
 parser.add_argument("output",type=Path)
 
+parser.add_argument("--page",type=int,choices=range(5),help="Export only one zero-based catalog page")
+
 args=parser.parse_args()
 
 args.output.mkdir(parents=True,exist_ok=True)
@@ -24,9 +26,11 @@ font=ImageFont.truetype(str(font_path),12) if font_path.exists() else ImageFont.
 
 title_font=ImageFont.truetype(str(font_path),18) if font_path.exists() else font
 
-pages=[("01-expressions","15 base expressions"),("02-behaviors","Behaviors 1–16"),("03-behaviors","Behaviors 17–31"),("04-effects","16 effects and wake variants"),("05-blinks-naps","Blink variants and optional nap peeks")]
+pages=[("01-expressions","15 base expressions"),("02-behaviors","Behaviors 1–16"),("03-behaviors","Behaviors 17–32"),("04-effects","16 effects and wake variants"),("05-blinks-naps","Blink variants and optional nap peeks")]
 
 for page,(name,title) in enumerate(pages):
+
+    if args.page is not None and page!=args.page:continue
 
     labels=[line.split("\t",1)[1] for line in (args.frames/f"page{page}.tsv").read_text().splitlines()]
 

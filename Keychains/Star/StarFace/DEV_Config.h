@@ -32,9 +32,8 @@
 #include "stdio.h"
 
 #include <Arduino.h>
-#include <SPI.h>
+#include "driver/spi_master.h"
 #include <Wire.h>
-#include "Debug.h"
 /**
  * data
  **/
@@ -42,12 +41,12 @@
 #define UWORD uint16_t
 #define UDOUBLE uint32_t
 
-#define SPI_PORT spi1
-#define I2C_PORT i2c2
 
-#if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
-#define VSPI FSPI
-#endif
+// LCD frames go out as DMA chunks of 64 full rows (the S3 limit is 32 KB);
+// four chunks cover a whole 240x240 frame of 16-bit pixels.
+#define LCD_SPI_CHUNK_BYTES (64 * 240 * 2)
+#define LCD_SPI_QUEUE 4
+#define LCD_SPI_MAX_BYTES LCD_SPI_CHUNK_BYTES
 
 /**
  * GPIOI config
@@ -68,37 +67,23 @@
 #define Touch_RST_PIN   (13)
 
 #define BAT_ADC_PIN     (1)
-// #define BAR_CHANNEL     (A3)
 
 /*------------------------------------------------------------------------------------------------------*/
 
 void DEV_Digital_Write(uint16_t Pin, uint8_t Value);
-uint8_t DEV_Digital_Read(uint16_t Pin);
 
 void DEV_GPIO_Mode(uint16_t Pin, uint16_t Mode);
-void DEV_KEY_Config(uint16_t Pin);
-void DEV_Digital_Write(uint16_t Pin, uint8_t Value);
-uint8_t DEV_Digital_Read(uint16_t Pin);
-
-uint16_t DEC_ADC_Read(void);
-
 void DEV_SPI_WriteByte(uint8_t Value);
 void DEV_SPI_Write_nByte(uint8_t *pData, uint32_t Len);
 
 void DEV_Delay_ms(uint32_t xms);
-void DEV_Delay_us(uint32_t xus);
 
 void DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value);
-void DEV_I2C_Write_nByte(uint8_t addr, uint8_t *pData, uint32_t Len);
-void DEV_I2C_Write_Register(uint8_t addr,uint8_t reg, uint16_t value);
 
-uint8_t DEV_I2C_Read_Byte(uint8_t addr, uint8_t reg);
-void DEV_I2C_Read_Register(uint8_t addr,uint8_t reg, uint16_t *value);
 void DEV_I2C_Read_nByte(uint8_t addr, uint8_t reg, uint8_t *pData, uint32_t Len);
 
 void DEV_SET_PWM(uint8_t Value);
 
 uint8_t DEV_Module_Init(void);
-void DEV_Module_Exit(void);
 
 #endif
