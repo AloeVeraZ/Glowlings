@@ -2,7 +2,7 @@
 
 These are layers and behavior states, not separate GIF assets on the ESP32. The firmware draws all frames procedurally. Several states share the same expression or blink; do not add the counts together as unique animations.
 
-The five embedded [GIF sheets in the README](README.md#animation-gallery) preview the full catalog. The GIFs are desktop exports, not assets stored on the ESP32.
+The [rendered gallery](#rendered-gallery) previews the full catalog. These GIFs are desktop exports, not assets stored on the ESP32. See the [Star README](README.md#in-motion) for silent footage of the physical keychain.
 
 ## 15 base expressions
 
@@ -45,11 +45,13 @@ Neutral, happy, sad, angry, focused, surprised, sleepy, squint, curious, confuse
 | 31 | Automatic sleep restored | Settling blink and fading closed-eye cue |
 | 32 | Recenter | 460 ms focusing squeeze, open-eyed pop and soft landing; gaze stays live |
 
-Double-tap near the same spot to set a new horizontal zero. The second press
-starts within 420 ms and remains a short tap. A single long hold no longer
-recenters. Double-clicking keeps its normal surprised reaction while adopting the
-new zero. The separate quick cue acknowledges an automatic recenter after its
-reference blend finishes while idle; protected reactions and sleep keep priority.
+Double-tap near the same spot to set a new zero on both axes: left/right and
+up/down. The second press starts within 420 ms of the first release and remains
+a short tap. The surprised reaction stays. The vertical zero lasts until the
+next wake, including across flat/hanging posture changes; horizontal centering
+can also refresh automatically. A single hold does not recenter. The separate
+quick cue acknowledges an idle automatic horizontal refresh after its blend;
+protected reactions and sleep keep priority.
 
 ![Quick recenter cue rendered by the firmware](docs/animations/06-recenter.gif)
 
@@ -59,7 +61,11 @@ Seven blink types are available: normal, fast, long, half, slow, squeeze and une
 
 Charging drops use a shared deterministic launch schedule. On unplug, no new cycles are emitted; each existing drop travels into the current eye edge and dissolves. The eyes stay green until the final scheduled arrival, then fade to the normal charge-dependent hue. Replug resumes emission. Blinks, winks and critical sleep still hide the stream with the actual aperture.
 
-The battery reservoir fills vertically to the measured estimate. Its meniscus sloshes while charging and small bubbles rise inside the liquid. It never animates a false increase in percentage. Heavier rounded numbers sit below the reservoir; the former moving highlight stripe and text badge are removed.
+The battery reservoir fills vertically to the displayed estimate. Estimates of
+95% and above are presented as 100%, with a full reservoir; lower estimates keep
+their individual percentages. This presentation does not change the gauge or
+confirm charge completion. The meniscus sloshes while charging and small bubbles
+rise inside the liquid. Rounded numbers sit below the reservoir.
 
 ## Optional nap-only variants
 
@@ -68,6 +74,54 @@ Left-eye peek, right-eye peek, dream flutter, both-eye peek. These exist for the
 ## Always-on shortcut
 
 While on the face, tap once, then press again within 420 ms and hold for at least 850 ms. A hold toggles only once until release. Repeat the gesture to return to automatic sleep. Ordinary double taps, single holds, drags and lost contact do not toggle. The mode disables inactivity sleep and drowsiness, while normal motion/touch reactions continue. Critical low battery still forces shutdown. Restarting the device restores automatic sleep.
+
+Tiny eye-colored stars fall inside each pupil while the mode is active. After
+20 seconds without touch or handling, the display dims and rendering drops to
+10 FPS. Touch or pickup restores the active mode.
+
+## Rendered gallery
+
+The first five sheets use the firmware renderer. They preview overlapping
+expression, behavior and effect layers; GIF speed is not device throughput.
+
+<details>
+<summary>15 base expressions</summary>
+
+![The 15 base expressions](docs/animations/01-expressions.gif)
+
+</details>
+
+<details>
+<summary>Behaviors 1–16</summary>
+
+![The first 16 behavior states](docs/animations/02-behaviors.gif)
+
+</details>
+
+<details>
+<summary>Behaviors 17–32</summary>
+
+![Remaining behavior states including always-on and recenter](docs/animations/03-behaviors.gif)
+
+</details>
+
+<details>
+<summary>Motion, charging and wake effects</summary>
+
+![Motion layers, green charging bubbles, liquid battery and wake variants](docs/animations/04-effects.gif)
+
+</details>
+
+<details>
+<summary>Blinks and optional screen-on naps</summary>
+
+![Blink types and optional nap peeks](docs/animations/05-blinks-naps.gif)
+
+</details>
+
+Focused demonstrations: [Always-on starfall](docs/animations/07-always-on-starfall.gif) ·
+[Double-tap zero](docs/animations/08-double-tap-zero.gif) ·
+[Battery presentation](docs/animations/09-battery-full.gif).
 
 ## Recreate the GIF catalog
 

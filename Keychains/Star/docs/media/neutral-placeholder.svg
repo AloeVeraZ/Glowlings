@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="426" viewBox="0 0 320 426">
+  <rect width="320" height="426" rx="16" fill="#101019"/>
+  <rect x="18" y="18" width="284" height="390" rx="12" fill="none" stroke="#454054" stroke-dasharray="6 7"/>
+  <text x="160" y="205" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" fill="#ddd6f4">Neutral look</text>
+  <text x="160" y="232" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#9991ac">Photo coming later</text>
+</svg>
