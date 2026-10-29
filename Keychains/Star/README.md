@@ -7,17 +7,16 @@ Built for the Waveshare ESP32-S3-Touch-LCD-1.28. Drawn on-device; no Wi-Fi or cl
 
 | Happy while charging | Low battery, low spirits | Neutral and looking around |
 | :---: | :---: | :---: |
-| <img src="docs/media/charging-and-tilt.gif" width="250" alt="Star smiling, looking around and tilting while green charging bubbles rise into its eyes"> | <img src="docs/media/low-battery.png" width="250" alt="Star's red, heavy-lidded eyes at very low battery"> | <img src="docs/media/neutral-placeholder.svg" width="250" alt="Reserved for a future photo of Star in its neutral state"> |
-| [Silent charging clip](docs/media/charging-and-tilt.mp4) | Tired red eyes as the battery runs low. | Photo coming later. |
+| <picture><img src="docs/media/charging-and-tilt.gif" width="250" alt="Star smiling, looking around and tilting while green charging bubbles rise into its eyes"></picture> | <picture><img src="docs/media/low-battery.png" width="250" alt="Star's red, heavy-lidded eyes at very low battery"></picture> | <picture><img src="docs/media/neutral.png" width="250" alt="Star in its black star-shaped keychain case with neutral purple eyes"></picture> |
+| Green bubbles rise through happy eyes. | Tired red eyes as the battery runs low. | Neutral purple eyes. |
 
 ## In motion
 
-Real footage from the assembled keychain. **Every clip is silent; all audio tracks were removed.**
+Real footage from the assembled keychain, shown as silent GIFs.
 
 | Touch reactions | Battery check | Shake → dizzy |
 | :---: | :---: | :---: |
-| <img src="docs/media/touch-reactions.gif" width="250" alt="Star reacting to a finger touching the screen"> | <img src="docs/media/battery-readout.gif" width="250" alt="Star changing from green charging eyes into a liquid battery readout"> | <img src="docs/media/shake-and-dizzy.gif" width="250" alt="Star being shaken, then showing spiral pupils before recovering"> |
-| [Watch MP4](docs/media/touch-reactions.mp4) | [Watch MP4](docs/media/battery-readout.mp4) | [Watch MP4](docs/media/shake-and-dizzy.mp4) |
+| <picture><img src="docs/media/touch-reactions.gif" width="250" alt="Star reacting to a finger touching the screen"></picture> | <picture><img src="docs/media/battery-readout.gif" width="250" alt="Star changing from green charging eyes into a liquid battery readout"></picture> | <picture><img src="docs/media/shake-and-dizzy.gif" width="250" alt="Star being shaken, then showing spiral pupils before recovering"></picture> |
 
 ## Controls
 

@@ -53,7 +53,7 @@ can also refresh automatically. A single hold does not recenter. The separate
 quick cue acknowledges an idle automatic horizontal refresh after its blend;
 protected reactions and sleep keep priority.
 
-![Quick recenter cue rendered by the firmware](docs/animations/06-recenter.gif)
+<picture><img src="docs/animations/06-recenter.gif" alt="Quick recenter cue rendered by the firmware"></picture>
 
 ## Blink and motion layers
 
@@ -87,35 +87,35 @@ expression, behavior and effect layers; GIF speed is not device throughput.
 <details>
 <summary>15 base expressions</summary>
 
-![The 15 base expressions](docs/animations/01-expressions.gif)
+<picture><img src="docs/animations/01-expressions.gif" alt="The 15 base expressions"></picture>
 
 </details>
 
 <details>
 <summary>Behaviors 1–16</summary>
 
-![The first 16 behavior states](docs/animations/02-behaviors.gif)
+<picture><img src="docs/animations/02-behaviors.gif" alt="The first 16 behavior states"></picture>
 
 </details>
 
 <details>
 <summary>Behaviors 17–32</summary>
 
-![Remaining behavior states including always-on and recenter](docs/animations/03-behaviors.gif)
+<picture><img src="docs/animations/03-behaviors.gif" alt="Remaining behavior states including always-on and recenter"></picture>
 
 </details>
 
 <details>
 <summary>Motion, charging and wake effects</summary>
 
-![Motion layers, green charging bubbles, liquid battery and wake variants](docs/animations/04-effects.gif)
+<picture><img src="docs/animations/04-effects.gif" alt="Motion layers, green charging bubbles, liquid battery and wake variants"></picture>
 
 </details>
 
 <details>
 <summary>Blinks and optional screen-on naps</summary>
 
-![Blink types and optional nap peeks](docs/animations/05-blinks-naps.gif)
+<picture><img src="docs/animations/05-blinks-naps.gif" alt="Blink types and optional nap peeks"></picture>
 
 </details>
 
